@@ -1,0 +1,102 @@
+# Formal Verification Coverage
+
+What is proved, what is not, and why.
+
+---
+
+## What is fully proved
+
+### Lean 4 — type soundness
+
+| Property | File | Theorems |
+|----------|------|----------|
+| `Address` constructor never wraps invalid strings | `lean/Address.lean` | `mkAddress_sound`, `mkAddress_none_iff_invalid` |
+| `Address` string representation is injective | `lean/Address.lean` | `addressToString_injective` |
+| `Address` roundtrip: re-validation of a valid address always succeeds | `lean/Address.lean` | `mkAddress_addressToString_roundtrip` |
+| `Address` structural invariants: length=42, starts "0x", lowercase hex body | `lean/Address.lean` | `address_length`, `address_startsWith0x`, `address_hex_body` |
+| Same four properties for `TxHash` (length=66, body=64) | `lean/TxHash.lean` | parallel theorems |
+| `HexString` soundness, completeness, injectivity, roundtrip | `lean/HexString.lean` | `mkHexString_sound`, `mkHexString_none_iff_invalid`, `mkHexString_some_iff`, `hexStringToString_injective`, `mkHexString_hexStringToString_roundtrip` |
+| `HexString` structural invariants: starts "0x", hex body, non-empty, length ≥ 2 | `lean/HexString.lean` | `hexString_startsWith0x`, `hexString_hex_body`, `hexString_nonempty`, `hexString_length_ge_2` |
+| `bytes32` decoder: soundness, completeness, injectivity, roundtrip | `lean/AbiCodec.lean` | `mkBytes32_sound`, `mkBytes32_none_iff`, `mkBytes32_some_iff`, `bytes32_injective`, `mkBytes32_roundtrip` |
+| `address` ABI codec roundtrip | `lean/AbiCodec.lean` | `address_codec_roundtrip` |
+| `WalletCmd` encode/decode is an isomorphism | `lean/WalletCodec.lean` | `decode_encode_roundtrip`, `encode_injective`, `encode_decode_partial_inverse` |
+| `natNormalize` preserves value | `lean/BigInt.lean` | `natNormalize_val` |
+| `natAddCarry` is correct | `lean/BigInt.lean` | `natAddCarry_val` |
+| `natAdd`, `natMulSmall`, `natAddSmall` are correct | `lean/BigInt.lean` | `natAdd_val`, `natMulSmall_val`, `natAddSmall_val` |
+| `shiftLeft` multiplies by base^n | `lean/BigInt.lean` | `shiftLeft_val` |
+| `natSub` is correct under ≥ precondition | `lean/BigInt.lean` | `natSubBorrow_val`, `natSub_val` |
+| `parseUnsigned` accumulation step is correct | `lean/BigInt.lean` | `parseUnsigned_step` |
+| `hexDigitVal` produces values in [0, 15] | `lean/RevertReason.lean` | `hexDigitVal_range` |
+| `hexToInt` is definitionally correct | `lean/RevertReason.lean` | `hexToInt_correct` |
+| `hexToBytes` decoded bytes are in [0, 255] | `lean/RevertReason.lean` | `hexToBytes_range`, `hexBytePair_val` |
+| UTF-8 ASCII decoding is correct | `lean/RevertReason.lean` | `utf8_ascii_correct` |
+| `decodeRevertReason` wrong selector → Nothing | `lean/RevertReason.lean` | `decodeRevertReason_wrong_selector` |
+| `decodeRevertReason` short payload → Nothing | `lean/RevertReason.lean` | `decodeRevertReason_too_short` |
+
+### TLA+ — state machine invariants (model-checked by TLC)
+
+| Property | File |
+|----------|------|
+| Wallet: `Connected`/`WrongChain` always carry address+chain | `tla/WalletSpec.tla` |
+| Wallet: `Disconnected`/`Error` never carry address | `tla/WalletSpec.tla` |
+| Wallet: `Disconnected` is always eventually reachable (no deadlock) | `tla/WalletSpec.tla` |
+| Wallet: `Connected` only transitions through the expected set of states | `tla/WalletSpec.tla` |
+| Transaction: terminal states (`Confirmed`/`Failed`/`Rejected`) never transition out | `tla/TransactionSpec.tla` |
+| Transaction: `Submitted` only reachable from `AwaitingSignature` | `tla/TransactionSpec.tla` |
+| Transaction: `Confirming` always carries a valid hash | `tla/TransactionSpec.tla` |
+| Transaction: confirmation count is monotonically non-decreasing | `tla/TransactionSpec.tla` |
+| Transaction: every pending transaction eventually reaches a terminal state | `tla/TransactionSpec.tla` |
+
+### Manual — JS port layer
+
+- `JS_PORT_PROOF.md`: exhaustive case analysis of all 11 command handlers showing no exception escapes the boundary and every failure path sends a typed response.
+
+---
+
+## Remaining proof obligations (with sorry, proof sketches provided)
+
+These theorems are stated with correct types and documented proof strategies.
+The sorry markers are temporary scaffolding — each has a complete proof sketch.
+
+| Property | File | Proof strategy | Est. lines |
+|----------|------|---------------|------------|
+| `natMul_val`: `natVal (natMul a b) = natVal a * natVal b` | `lean/BigInt.lean` | Induction on `a`; head term + shifted tail; indexedMap/foldl coordination | ~40 |
+| `natCompare_spec`: compare reflects numeric order | `lean/BigInt.lean` | Length → value range lemmas + big-endian lexicographic induction | ~80 |
+| `natDivMod_spec`: satisfies division algorithm property | `lean/BigInt.lean` | `findQd_spec` (binary search) + step invariant + termination | ~150 |
+| `fromString_toString_roundtrip`: round-trip isomorphism | `lean/BigInt.lean` | Decimal string encoding/decoding correspondence via `parseUnsigned_step` | ~200 |
+| `uint256_codec_roundtrip` | `lean/AbiCodec.lean` | Delegates to `fromString_toString_roundtrip` | ~5 |
+| `decodeRevertReason_correct`: full correctness for well-formed payload | `lean/RevertReason.lean` | String take/drop arithmetic + chain hexToInt + hexToBytes + utf8 lemmas | ~100 |
+| `BigInt` overflow safety invariant | `lean/BigInt.lean` | Propagate range bounds through mulSmallCarry; `digit * k + carry ≤ (10^7-1)^2 + (10^7-1) < 2^53` | ~100 |
+
+---
+
+## Known limitations of existing proofs
+
+1. **TLA+ is finite-model checked, not proof-verified.** The model checker explores all reachable states within the given constants (2 addresses, 2 chains, 3 confirmation depth). Properties hold for those parameters; they hold generally by the construction of the state machine, but this is not mechanically proved.
+
+2. **Lean proofs model a simplified `toLowerHex`** that only maps `A–F → a–f`. The Elm runtime's `String.toLower` is broader (full Unicode case folding). In practice all addresses are ASCII hex, so this does not matter, but it is a gap between the model and the implementation.
+
+3. **JS port findings (F1–F7) from `JS_PORT_PROOF.md` are not fixed.** `watchEvent` is a stub; `switchChain` sends no success response; error tag naming is inconsistent. These are documented, not remediated.
+
+4. **JSON layer axiomatized.** The `jsonString_roundtrip` axiom in `AbiCodec.lean` asserts that Elm's `E.string`/`D.string` round-trips. This is a contractual property of the Elm JSON library that cannot be verified in Lean without embedding Elm's semantics.
+
+5. **UTF-8 multi-byte sequences.** `utf8_ascii_correct` proves the ASCII case. The 2-, 3-, and 4-byte UTF-8 sequences follow the same structural pattern but are not separately stated as theorems in `RevertReason.lean`.
+
+---
+
+## How to check the proofs
+
+```bash
+# Lean 4
+cd proofs/lean
+lean Address.lean        # no output = clean
+lean TxHash.lean
+lean HexString.lean
+lean WalletCodec.lean
+lean BigInt.lean
+lean AbiCodec.lean
+lean RevertReason.lean
+
+# TLA+ (requires tla2tools.jar or TLA+ Toolbox)
+# Load WalletSpec.tla / TransactionSpec.tla, run TLC with provided .cfg files
+```

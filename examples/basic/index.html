@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>elm-web3 basic example</title>
+    <style>
+      body { background: #1a1a1a; color: #e0e0e0; }
+      button { background: #333; color: #e0e0e0; border: 1px solid #555; padding: 6px 14px; cursor: pointer; font-family: monospace; }
+      button:hover:not(:disabled) { background: #444; }
+      button:disabled { opacity: 0.5; cursor: default; }
+      input { background: #222; color: #e0e0e0; border: 1px solid #555; padding: 4px 8px; font-family: monospace; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script src="elm.js"></script>
+    <script type="module">
+      import { setupPorts } from './ports.js'
+      const app = Elm.Main.init({ node: document.getElementById('app') })
+      setupPorts(app)
+    </script>
+  </body>
+</html>
