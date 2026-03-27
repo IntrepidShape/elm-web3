@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.0.1 — 2026-03-27
+
+### Changes
+
+- Removed unused `elm/http` and `elm/time` from `dependencies`. Neither was imported
+  by any of the 19 source modules; their presence was carry-over from an earlier draft.
+  No API changes — this is a pure dependency cleanup.
+
+---
+
 ## 2.0.0 — 2026-03-27
 
 ### New modules
