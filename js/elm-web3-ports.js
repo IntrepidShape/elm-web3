@@ -8,24 +8,50 @@
  * Usage:
  *   import { setupPorts } from 'elm-web3/js/elm-web3-ports.js'
  *   const app = Elm.Main.init({ node: ... })
- *   setupPorts(app)
+ *   setupPorts(app, { rpcUrl: 'https://rpc.example.com' })  // rpcUrl optional
  */
 
 // EIP-6963: map of rdns -> { info, provider } for discovered wallets
 const _eip6963Providers = new Map()
 
-export function setupPorts(app) {
+export function setupPorts(app, { rpcUrl } = {}) {
+  // Route read-only JSON-RPC calls: prefer rpcUrl over window.ethereum
+  let _rpcId = 0
+  async function _rpcRequest(method, params) {
+    if (rpcUrl) {
+      const res = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: ++_rpcId, method, params }),
+      })
+      const json = await res.json()
+      if (json.error) throw new Error(json.error.message || JSON.stringify(json.error))
+      return json.result
+    }
+    if (!window.ethereum) throw new Error('No wallet found')
+    return window.ethereum.request({ method, params })
+  }
+
+  // Notify Elm of read-only mode when rpcUrl is present but no wallet is available
+  if (rpcUrl) {
+    setTimeout(() => {
+      if (!window.ethereum) app.ports.web3Sub.send({ tag: 'readOnly' })
+    }, 0)
+  }
+
   // --- Wallet ---
 
   app.ports.web3Cmd.subscribe(async (cmd) => {
     try {
       switch (cmd.tag) {
         case 'connect': {
-          if (!window.ethereum) {
-            app.ports.web3Sub.send({ tag: 'error', message: 'No wallet found' })
+          if (!window.ethereum && rpcUrl) {
+            app.ports.web3Sub.send({ tag: 'readOnly' })
             return
           }
+          if (!window.ethereum) throw new Error('No wallet found')
           const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' })
+          if (!accounts || accounts.length === 0) throw new Error('Wallet returned no accounts')
           const chainId = await window.ethereum.request({ method: 'eth_chainId' })
           app.ports.web3Sub.send({
             tag: 'connected',
@@ -40,32 +66,28 @@ export function setupPorts(app) {
           break
 
         case 'switchChain': {
+          if (!window.ethereum) throw new Error('No wallet found')
           const hex = '0x' + cmd.chainId.toString(16)
           await window.ethereum.request({
             method: 'wallet_switchEthereumChain',
             params: [{ chainId: hex }],
           })
+          app.ports.web3Sub.send({ tag: 'switchChainOk', chainId: cmd.chainId })
           break
         }
 
-        // --- Contract reads ---
+        // --- Contract reads (and simulated writes via from) ---
         case 'call': {
-          const result = await window.ethereum.request({
-            method: 'eth_call',
-            params: [
-              {
-                to: cmd.contract,
-                data: encodeCall(cmd.method, cmd.args),
-              },
-              cmd.block || 'latest',
-            ],
-          })
+          const callTx = { to: cmd.contract, data: encodeCall(cmd.method, cmd.args) }
+          if (cmd.from) callTx.from = cmd.from
+          const result = await _rpcRequest('eth_call', [callTx, cmd.block || 'latest'])
           app.ports.web3Sub.send({ tag: 'callResult', id: cmd.id, data: result })
           break
         }
 
         // --- Gas estimation ---
         case 'estimateGas': {
+          if (!window.ethereum) throw new Error('No wallet found')
           const accounts = await window.ethereum.request({ method: 'eth_accounts' })
           const txParams = {
             from: accounts[0],
@@ -83,6 +105,7 @@ export function setupPorts(app) {
 
         // --- Contract writes ---
         case 'send': {
+          if (!window.ethereum) throw new Error('No wallet found')
           const accounts = await window.ethereum.request({ method: 'eth_accounts' })
           const txParams = {
             from: accounts[0],
@@ -99,7 +122,7 @@ export function setupPorts(app) {
           app.ports.web3Sub.send({ tag: 'submitted', hash })
 
           // Poll for confirmation
-          pollReceipt(hash, app)
+          pollReceipt(hash, app, _rpcRequest)
           break
         }
 
@@ -108,25 +131,62 @@ export function setupPorts(app) {
           const MULTICALL3 = '0xcA11bde05977b3631167028862bE2a173976CA11'
           const callDatas = cmd.calls.map(c => encodeCall(c.method, c.args))
           const data = _encodeAggregate3(cmd.calls, callDatas)
-          const raw = await window.ethereum.request({
-            method: 'eth_call',
-            params: [{ to: MULTICALL3, data }, 'latest'],
-          })
+          const raw = await _rpcRequest('eth_call', [{ to: MULTICALL3, data }, 'latest'])
           const results = _decodeAggregate3Result(raw)
           app.ports.web3Sub.send({ tag: 'multicallResult', id: cmd.id, results })
           break
         }
 
-        // --- Event watching ---
+        // --- Event watching (4s poll) ---
         case 'watchEvent': {
-          // Use eth_subscribe if available, fall back to polling
-          // For now: polling every 4s
-          // Production: use websocket subscription
+          const startHex = await _rpcRequest('eth_blockNumber', [])
+          let fromBlock = parseInt(startHex, 16)
+          setInterval(async () => {
+            try {
+              const toHex = await _rpcRequest('eth_blockNumber', [])
+              const toBlock = parseInt(toHex, 16)
+              if (toBlock < fromBlock) return
+              const filter = { address: cmd.contract, fromBlock: '0x' + fromBlock.toString(16), toBlock: toHex }
+              if (cmd.topics?.length) filter.topics = cmd.topics
+              const logs = await _rpcRequest('eth_getLogs', [filter])
+              for (const log of logs) {
+                app.ports.web3Sub.send({
+                  tag: 'eventLog',
+                  contract: cmd.contract,
+                  data: log.data,
+                  topics: log.topics || [],
+                  blockNumber: parseInt(log.blockNumber, 16),
+                  txHash: log.transactionHash,
+                  logIndex: parseInt(log.logIndex, 16),
+                })
+              }
+              fromBlock = toBlock + 1
+            } catch (_) {}
+          }, 4000)
+          break
+        }
+
+        // --- Native ETH balance ---
+        case 'getBalance': {
+          const hex = await _rpcRequest('eth_getBalance', [cmd.address, cmd.block || 'latest'])
+          app.ports.web3Sub.send({ tag: 'balance', id: cmd.id, wei: BigInt(hex).toString() })
+          break
+        }
+
+        // --- personal_sign (login flows, simple message signing) ---
+        case 'personalSign': {
+          if (!window.ethereum) throw new Error('No wallet found')
+          const sig = await window.ethereum.request({
+            method: 'personal_sign',
+            params: [cmd.message, cmd.from],
+          })
+          app.ports.web3Sub.send({ tag: 'signed', id: cmd.id, signature: sig })
           break
         }
 
         // --- EIP-712 typed signing ---
         case 'signTypedData': {
+          if (!window.ethereum) throw new Error('No wallet found')
           const signature = await window.ethereum.request({
             method: 'eth_signTypedData_v4',
             params: [cmd.from, JSON.stringify(cmd.data)],
@@ -140,10 +200,7 @@ export function setupPorts(app) {
           // Re-request providers and connect to the one matching rdns
           const { rdns } = cmd
           const found = _eip6963Providers.get(rdns)
-          if (!found) {
-            app.ports.web3Sub.send({ tag: 'error', message: `Wallet not found: ${rdns}` })
-            return
-          }
+          if (!found) throw new Error(`Wallet not found: ${rdns}`)
           const accounts = await found.provider.request({ method: 'eth_requestAccounts' })
           const chainId = await found.provider.request({ method: 'eth_chainId' })
           // Swap the active provider so all subsequent calls use the selected wallet
@@ -153,6 +210,124 @@ export function setupPorts(app) {
             address: accounts[0],
             chainId: parseInt(chainId, 16),
           })
+          break
+        }
+
+        // --- Add chain to wallet (EIP-3085) ---
+        case 'addChain': {
+          if (!window.ethereum) throw new Error('No wallet found')
+          await window.ethereum.request({
+            method: 'wallet_addEthereumChain',
+            params: [{
+              chainId: '0x' + cmd.chainId.toString(16),
+              chainName: cmd.chainName,
+              rpcUrls: cmd.rpcUrls,
+              nativeCurrency: cmd.nativeCurrency,
+              blockExplorerUrls: cmd.blockExplorerUrls,
+            }],
+          })
+          app.ports.web3Sub.send({ tag: 'chainAdded' })
+          break
+        }
+
+        // --- Block number query ---
+        case 'getBlockNumber': {
+          const hex = await _rpcRequest('eth_blockNumber', [])
+          app.ports.web3Sub.send({ tag: 'blockNumber', id: cmd.id, number: parseInt(hex, 16) })
+          break
+        }
+
+        // --- Block data query ---
+        case 'getBlock': {
+          const block = await _rpcRequest('eth_getBlockByNumber', [
+            blockNumberToHex(cmd.block), false,
+          ])
+          app.ports.web3Sub.send({
+            tag: 'block', id: cmd.id,
+            number: parseInt(block.number, 16),
+            hash: block.hash,
+            timestamp: parseInt(block.timestamp, 16),
+            gasLimit: BigInt(block.gasLimit).toString(),
+            gasUsed: BigInt(block.gasUsed).toString(),
+            baseFeePerGas: block.baseFeePerGas ? BigInt(block.baseFeePerGas).toString() : null,
+            parentHash: block.parentHash,
+          })
+          break
+        }
+
+        // --- Watch block number (poll every 4s) ---
+        case 'watchBlockNumber': {
+          const pollBlock = async () => {
+            try {
+              const hex = await _rpcRequest('eth_blockNumber', [])
+              app.ports.web3Sub.send({ tag: 'blockNumber', id: cmd.id, number: parseInt(hex, 16) })
+            } catch (_) {}
+          }
+          pollBlock()
+          setInterval(pollBlock, 4000)
+          break
+        }
+
+        // --- Transaction count (nonce) ---
+        case 'getTransactionCount': {
+          const hex = await _rpcRequest('eth_getTransactionCount', [cmd.address, 'latest'])
+          app.ports.web3Sub.send({ tag: 'txCount', id: cmd.id, count: parseInt(hex, 16) })
+          break
+        }
+
+        // --- Storage slot read ---
+        case 'getStorageAt': {
+          const val = await _rpcRequest('eth_getStorageAt', [cmd.contract, cmd.slot, cmd.block || 'latest'])
+          app.ports.web3Sub.send({ tag: 'storageAt', id: cmd.id, data: val })
+          break
+        }
+
+        // --- Contract bytecode ---
+        case 'getCode': {
+          const code = await _rpcRequest('eth_getCode', [cmd.contract, cmd.block || 'latest'])
+          app.ports.web3Sub.send({ tag: 'code', id: cmd.id, data: code })
+          break
+        }
+
+        // --- Current gas price ---
+        case 'getGasPrice': {
+          const hex = await _rpcRequest('eth_gasPrice', [])
+          app.ports.web3Sub.send({ tag: 'gasPrice', id: cmd.id, wei: BigInt(hex).toString() })
+          break
+        }
+
+        // --- EIP-1559 fee history ---
+        case 'getFeeHistory': {
+          const result = await _rpcRequest('eth_feeHistory', [cmd.blockCount, 'latest', []])
+          app.ports.web3Sub.send({
+            tag: 'feeHistory', id: cmd.id,
+            baseFeePerGas: result.baseFeePerGas.map(h => BigInt(h).toString()),
+            gasUsedRatio: result.gasUsedRatio,
+            oldestBlock: parseInt(result.oldestBlock, 16),
+          })
+          break
+        }
+
+        // --- Standalone receipt query (does not poll) ---
+        case 'getTransactionReceipt': {
+          const receipt = await _rpcRequest('eth_getTransactionReceipt', [cmd.hash])
+          if (!receipt) {
+            app.ports.web3Sub.send({ tag: 'receiptNotFound', id: cmd.id })
+          } else {
+            app.ports.web3Sub.send({
+              tag: 'receiptResult', id: cmd.id,
+              hash: receipt.transactionHash,
+              blockNumber: parseInt(receipt.blockNumber, 16),
+              gasUsed: parseInt(receipt.gasUsed, 16).toString(),
+              status: receipt.status === '0x1',
+              logs: (receipt.logs || []).map(log => ({
+                address: log.address, topics: log.topics || [],
+                data: log.data,
+                blockNumber: parseInt(log.blockNumber, 16),
+                logIndex: parseInt(log.logIndex, 16),
+              })),
+            })
+          }
           break
         }
 
@@ -166,12 +341,11 @@ export function setupPorts(app) {
           if (cmd.topics && cmd.topics.length > 0) {
             filter.topics = cmd.topics
           }
-          const logs = await window.ethereum.request({
-            method: 'eth_getLogs',
-            params: [filter],
-          })
+          const logs = await _rpcRequest('eth_getLogs', [filter])
           const processedLogs = logs.map(log => ({
+            contract: log.address,
             data: log.data,
+            topics: log.topics || [],
             blockNumber: parseInt(log.blockNumber, 16),
             txHash: log.transactionHash,
             logIndex: parseInt(log.logIndex, 16),
@@ -179,6 +353,101 @@ export function setupPorts(app) {
           app.ports.web3Sub.send({ tag: 'logs', logs: processedLogs })
           break
         }
+
+        // --- Fetch transaction by hash ---
+        case 'getTransaction': {
+          const tx = await _rpcRequest('eth_getTransactionByHash', [cmd.hash])
+          if (!tx) {
+            app.ports.web3Sub.send({ tag: 'transactionNotFound', id: cmd.id })
+          } else {
+            app.ports.web3Sub.send({
+              tag: 'transaction', id: cmd.id,
+              hash: tx.hash,
+              from: tx.from,
+              to: tx.to || null,
+              value: BigInt(tx.value).toString(),
+              nonce: parseInt(tx.nonce, 16),
+              data: tx.input,
+              gas: parseInt(tx.gas, 16),
+              blockNumber: tx.blockNumber ? parseInt(tx.blockNumber, 16) : null,
+              blockHash: tx.blockHash || null,
+            })
+          }
+          break
+        }
+
+        // --- Contract deployment ---
+        case 'deploy': {
+          if (!window.ethereum) throw new Error('No wallet found')
+          const accounts = await window.ethereum.request({ method: 'eth_accounts' })
+          const argsEncoded = (cmd.args || []).join('')
+          const txParams = {
+            from: accounts[0],
+            data: cmd.bytecode + argsEncoded,
+          }
+          if (cmd.value) txParams.value = '0x' + BigInt(cmd.value).toString(16)
+          if (cmd.gasLimit) txParams.gas = '0x' + cmd.gasLimit.toString(16)
+          const deployHash = await window.ethereum.request({ method: 'eth_sendTransaction', params: [txParams] })
+          app.ports.web3Sub.send({ tag: 'submitted', hash: deployHash })
+          pollReceipt(deployHash, app, _rpcRequest)
+          break
+        }
+
+        // --- Broadcast pre-signed transaction ---
+        case 'sendRawTransaction': {
+          const rawHash = await _rpcRequest('eth_sendRawTransaction', [cmd.rawTx])
+          app.ports.web3Sub.send({ tag: 'submitted', hash: rawHash })
+          pollReceipt(rawHash, app, _rpcRequest)
+          break
+        }
+
+        // --- EIP-747: add token to wallet UI ---
+        case 'watchAsset': {
+          if (!window.ethereum) throw new Error('No wallet found')
+          await window.ethereum.request({
+            method: 'wallet_watchAsset',
+            params: { type: 'ERC20', options: { address: cmd.address, symbol: cmd.symbol, decimals: cmd.decimals, image: cmd.image || '' } },
+          })
+          app.ports.web3Sub.send({ tag: 'assetWatched' })
+          break
+        }
+
+        // --- EIP-2255: request permissions ---
+        case 'requestPermissions': {
+          if (!window.ethereum) throw new Error('No wallet found')
+          const reqPerms = await window.ethereum.request({
+            method: 'wallet_requestPermissions',
+            params: [{ eth_accounts: {} }],
+          })
+          app.ports.web3Sub.send({ tag: 'permissions', permissions: reqPerms.map(p => p.parentCapability) })
+          break
+        }
+
+        // --- EIP-2255: get permissions ---
+        case 'getPermissions': {
+          if (!window.ethereum) throw new Error('No wallet found')
+          const curPerms = await window.ethereum.request({ method: 'wallet_getPermissions' })
+          app.ports.web3Sub.send({ tag: 'permissions', permissions: curPerms.map(p => p.parentCapability) })
+          break
+        }
+
+        // --- Block transaction count ---
+        case 'getBlockTransactionCount': {
+          const blockHex = typeof cmd.block === 'number' ? '0x' + cmd.block.toString(16) : cmd.block
+          const txCountHex = await _rpcRequest('eth_getBlockTransactionCountByNumber', [blockHex])
+          app.ports.web3Sub.send({ tag: 'blockTxCount', id: cmd.id, count: parseInt(txCountHex, 16) })
+          break
+        }
+
+        // --- Keccak256 hash ---
+        case 'keccak256': {
+          const kHash = _keccak256Full(cmd.message)
+          app.ports.web3Sub.send({ tag: 'keccak256Result', id: cmd.id, hash: kHash })
+          break
+        }
+
+        default:
+          app.ports.web3Sub.send({ tag: 'unknownCmd', cmd: cmd.tag })
       }
     } catch (err) {
       if (err.code === 4001) {
@@ -198,16 +467,26 @@ export function setupPorts(app) {
   // --- Wallet events ---
   if (window.ethereum) {
     window.ethereum.on('chainChanged', (chainId) => {
-      app.ports.web3Sub.send({ tag: 'chainChanged', chainId: parseInt(chainId, 16) })
+      try {
+        app.ports.web3Sub.send({ tag: 'chainChanged', chainId: parseInt(chainId, 16) })
+      } catch (_) {}
     })
     window.ethereum.on('accountsChanged', (accounts) => {
-      if (accounts.length === 0) {
-        app.ports.web3Sub.send({ tag: 'disconnected' })
-      } else {
-        app.ports.web3Sub.send({ tag: 'accountChanged', address: accounts[0] })
-      }
+      try {
+        if (accounts.length === 0) {
+          app.ports.web3Sub.send({ tag: 'disconnected' })
+        } else {
+          app.ports.web3Sub.send({ tag: 'accountChanged', address: accounts[0] })
+        }
+      } catch (_) {}
     })
   }
+}
+
+/** Swap in any EIP-1193 provider (e.g. WalletConnect) before calling connect.
+ *  elm-web3 carries no WalletConnect dependency — you bring your own. */
+export function setupExternalProvider(provider) {
+  window.ethereum = provider
 }
 
 // --- EIP-6963: multi-wallet discovery ---
@@ -295,6 +574,51 @@ function _keccakF(s) {
   }
 }
 
+// Returns full 32-byte keccak256 of a UTF-8 string as a 0x-prefixed hex string
+function _keccak256Full(input) {
+  const rate = 136
+  const msg = []
+  for (let i = 0; i < input.length; i++) {
+    const c = input.charCodeAt(i)
+    if (c < 0x80) {
+      msg.push(c)
+    } else if (c < 0x800) {
+      msg.push(0xc0 | (c >> 6), 0x80 | (c & 0x3f))
+    } else {
+      msg.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 0x3f), 0x80 | (c & 0x3f))
+    }
+  }
+  msg.push(0x01)
+  while (msg.length % rate !== 0) msg.push(0x00)
+  msg[msg.length - 1] |= 0x80
+
+  const s = new Array(50).fill(0)
+  for (let blk = 0; blk < msg.length; blk += rate) {
+    for (let i = 0; i < 17; i++) {
+      const j = blk + i * 8
+      s[2 * i]     ^= msg[j]     | (msg[j + 1] << 8) | (msg[j + 2] << 16) | (msg[j + 3] << 24)
+      s[2 * i + 1] ^= msg[j + 4] | (msg[j + 5] << 8) | (msg[j + 6] << 16) | (msg[j + 7] << 24)
+    }
+    _keccakF(s)
+  }
+
+  // Extract all 32 bytes (first 4 lanes, lo-then-hi each)
+  let hex = '0x'
+  for (let lane = 0; lane < 4; lane++) {
+    const lo = s[2 * lane] >>> 0
+    const hi = s[2 * lane + 1] >>> 0
+    hex += (lo & 0xff).toString(16).padStart(2, '0')
+    hex += ((lo >>> 8) & 0xff).toString(16).padStart(2, '0')
+    hex += ((lo >>> 16) & 0xff).toString(16).padStart(2, '0')
+    hex += (lo >>> 24).toString(16).padStart(2, '0')
+    hex += (hi & 0xff).toString(16).padStart(2, '0')
+    hex += ((hi >>> 8) & 0xff).toString(16).padStart(2, '0')
+    hex += ((hi >>> 16) & 0xff).toString(16).padStart(2, '0')
+    hex += (hi >>> 24).toString(16).padStart(2, '0')
+  }
+  return hex
+}
+
 // Returns first 4 bytes of keccak256 of an ASCII string
 function _selector(sig) {
   const rate = 136
@@ -320,14 +644,63 @@ function _selector(sig) {
     .map(b => b.toString(16).padStart(2,'0')).join('')
 }
 
-// ABI-encode a static type to 32 bytes
+// True if this ABI type uses dynamic (offset-based) encoding
+function _isDyn(type) {
+  const t = type.trim()
+  if (t === 'string' || t === 'bytes') return true
+  if (t.endsWith('[]')) return true
+  // Fixed array T[k]: dynamic iff element type is dynamic
+  const fixedMatch = t.match(/^(.*)\[(\d+)\]$/)
+  if (fixedMatch) return _isDyn(fixedMatch[1])
+  // Tuple: dynamic iff any member is dynamic
+  if (t.startsWith('(')) {
+    const inner = t.slice(1, t.lastIndexOf(')'))
+    return splitTopLevelTypes(inner).some(m => _isDyn(m))
+  }
+  return false
+}
+
+// Number of 32-byte words this type contributes to the head section
+function _headSize(type) {
+  const t = type.trim()
+  if (_isDyn(t)) return 1  // offset word
+  const fixedMatch = t.match(/^(.*)\[(\d+)\]$/)
+  if (fixedMatch) return parseInt(fixedMatch[2]) * _headSize(fixedMatch[1])
+  if (t.startsWith('(')) {
+    const inner = t.slice(1, t.lastIndexOf(')'))
+    return splitTopLevelTypes(inner).reduce((s, m) => s + _headSize(m), 0)
+  }
+  return 1
+}
+
+// ABI-encode a static type; returns hex string (may be more than 32 bytes for arrays/tuples)
 function _encStatic(type, val) {
-  if (type === 'address') {
+  const t = type.trim()
+  // Fixed array of static type: T[k]
+  const fixedMatch = t.match(/^(.*)\[(\d+)\]$/)
+  if (fixedMatch) {
+    const elemType = fixedMatch[1]
+    const arr = Array.isArray(val) ? val : []
+    return arr.map((v, i) => _encStatic(elemType, arr[i])).join('')
+  }
+  // Static tuple: (T1,T2,...) where all members are static
+  if (t.startsWith('(')) {
+    const inner = t.slice(1, t.lastIndexOf(')'))
+    const innerTypes = splitTopLevelTypes(inner)
+    const arr = Array.isArray(val) ? val : []
+    return innerTypes.map((et, i) => _encStatic(et, arr[i])).join('')
+  }
+  if (t === 'address') {
     const addr = val.toString().replace(/^0x/i,'').toLowerCase().padStart(40,'0')
     return ('000000000000000000000000' + addr)
   }
-  if (type === 'bool') {
+  if (t === 'bool') {
     return '000000000000000000000000000000000000000000000000000000000000000' + (val ? '1' : '0')
+  }
+  // bytesN (bytes1..bytes32): left-aligned, right-padded with zeros
+  if (/^bytes\d+$/.test(t)) {
+    const hex = val.toString().replace(/^0x/i, '').toLowerCase()
+    return hex.padEnd(64, '0').slice(0, 64)
   }
   // uint*, int*
   let n = BigInt(val.toString())
@@ -337,22 +710,61 @@ function _encStatic(type, val) {
 
 // ABI-encode a dynamic type; returns hex string (no 0x prefix)
 function _encDyn(type, val) {
-  if (type === 'string' || type === 'bytes') {
-    const bytes = Array.from(new TextEncoder().encode(val.toString()))
-    const lenHex = BigInt(bytes.length).toString(16).padStart(64,'0')
-    const dataHex = bytes.map(b => b.toString(16).padStart(2,'0')).join('')
-    const pad = (32 - (bytes.length % 32)) % 32
+  const t = type.trim()
+  if (t === 'string') {
+    const byteArr = Array.from(new TextEncoder().encode(val.toString()))
+    const lenHex = BigInt(byteArr.length).toString(16).padStart(64,'0')
+    const dataHex = byteArr.map(b => b.toString(16).padStart(2,'0')).join('')
+    const pad = (32 - (byteArr.length % 32)) % 32
     return lenHex + dataHex + '00'.repeat(pad)
+  }
+  if (t === 'bytes') {
+    const hex = val.toString().replace(/^0x/i, '').toLowerCase()
+    const byteLen = hex.length / 2
+    const lenHex = BigInt(byteLen).toString(16).padStart(64,'0')
+    const pad = (32 - (byteLen % 32)) % 32
+    return lenHex + hex + '00'.repeat(pad)
+  }
+  // Dynamic array: T[]
+  if (t.endsWith('[]')) {
+    const elemType = t.slice(0, -2)
+    const arr = Array.isArray(val) ? val : []
+    const lenHex = BigInt(arr.length).toString(16).padStart(64,'0')
+    return lenHex + _abiEncode(arr.map(() => elemType), arr)
+  }
+  // Tuple types: (T1,T2,...), (T1,T2,...)[k], (T1,T2,...)[]
+  if (t.startsWith('(')) {
+    const closeParen = t.lastIndexOf(')')
+    const inner = t.slice(1, closeParen)
+    const suffix = t.slice(closeParen + 1)
+    const tupleType = t.slice(0, closeParen + 1)
+    if (suffix === '') {
+      // Dynamic tuple — encode members with head/tail
+      const innerTypes = splitTopLevelTypes(inner)
+      const arr = Array.isArray(val) ? val : []
+      return _abiEncode(innerTypes, arr)
+    }
+    if (suffix === '[]') {
+      // Dynamic array of tuples
+      const arr = Array.isArray(val) ? val : []
+      const lenHex = BigInt(arr.length).toString(16).padStart(64,'0')
+      return lenHex + _abiEncode(arr.map(() => tupleType), arr)
+    }
+    // T[k] where T is a dynamic tuple
+    const kMatch = suffix.match(/^\[(\d+)\]$/)
+    if (kMatch) {
+      const arr = Array.isArray(val) ? val : []
+      return _abiEncode(arr.map(() => tupleType), arr)
+    }
   }
   throw new Error('encodeCall: unsupported dynamic type ' + type)
 }
 
-function _isDyn(type) { return type==='string' || type==='bytes' || type.includes('[') }
-
 // Returns hex-encoded ABI calldata (no selector, no 0x)
 function _abiEncode(types, args) {
   const headParts = [], tailParts = []
-  let tailOffset = types.length * 32
+  // Head size accounts for multi-word static types (fixed arrays, static tuples)
+  let tailOffset = types.reduce((s, t) => s + _headSize(t) * 32, 0)
   for (let i = 0; i < types.length; i++) {
     const t = types[i].trim()
     if (_isDyn(t)) {
@@ -472,14 +884,11 @@ function encodeCall(method, args) {
   return '0x' + sel + _abiEncode(types, args)
 }
 
-async function pollReceipt(hash, app) {
+async function pollReceipt(hash, app, rpc) {
   for (let i = 0; i < 120; i++) {
     await new Promise((r) => setTimeout(r, 2000))
     try {
-      const receipt = await window.ethereum.request({
-        method: 'eth_getTransactionReceipt',
-        params: [hash],
-      })
+      const receipt = await rpc('eth_getTransactionReceipt', [hash])
       if (receipt) {
         app.ports.web3Sub.send({
           tag: 'confirmed',
@@ -498,11 +907,13 @@ async function pollReceipt(hash, app) {
         return
       }
       // Send confirmation count (block distance)
-      const block = await window.ethereum.request({ method: 'eth_blockNumber' })
+      await rpc('eth_blockNumber', [])
       app.ports.web3Sub.send({ tag: 'confirmation', hash, count: i + 1 })
     } catch (_) {
       // keep polling
     }
   }
-  app.ports.web3Sub.send({ tag: 'failed', error: 'Transaction not confirmed after 4 minutes' })
+  try {
+    app.ports.web3Sub.send({ tag: 'failed', error: 'Transaction not confirmed after 4 minutes' })
+  } catch (_) {}
 }

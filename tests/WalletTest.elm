@@ -34,6 +34,8 @@ suite =
         , helperTests
         , encoderTests
         , decoderTests
+        , watchAssetTests
+        , permissionsTests
         ]
 
 
@@ -166,6 +168,71 @@ stateTransitionTests =
                 Wallet.update pulseChain (Wallet.WalletConnected validAddress 369) Wallet.Connecting
                     |> Wallet.isConnected
                     |> Expect.equal True
+        , test "ReadOnly + AccountChanged -> ReadOnly (no-op)" <|
+            \_ ->
+                Wallet.update pulseChain (Wallet.AccountChanged validAddress) Wallet.ReadOnly
+                    |> Expect.equal Wallet.ReadOnly
+        , test "Error + WalletDisconnected -> Disconnected (recovery)" <|
+            \_ ->
+                Wallet.update pulseChain Wallet.WalletDisconnected (Wallet.Error "something went wrong")
+                    |> Expect.equal Wallet.Disconnected
+        , test "SwitchChainOk on expected chain from WrongChain -> Connected" <|
+            \_ ->
+                let
+                    wrongChain =
+                        Wallet.update pulseChain (Wallet.WalletConnected validAddress 1) Wallet.Disconnected
+
+                    newState =
+                        Wallet.update pulseChain (Wallet.SwitchChainOk 369) wrongChain
+                in
+                Wallet.isConnected newState |> Expect.equal True
+        , test "SwitchChainOk from Connected -> no-op" <|
+            \_ ->
+                let
+                    connected =
+                        Wallet.update pulseChain (Wallet.WalletConnected validAddress 369) Wallet.Disconnected
+
+                    newState =
+                        Wallet.update pulseChain (Wallet.SwitchChainOk 369) connected
+                in
+                Wallet.isConnected newState |> Expect.equal True
+        , test "SwitchChainOk on wrong chain from WrongChain -> still WrongChain" <|
+            \_ ->
+                let
+                    wrongChain =
+                        Wallet.update pulseChain (Wallet.WalletConnected validAddress 1) Wallet.Disconnected
+
+                    newState =
+                        Wallet.update pulseChain (Wallet.SwitchChainOk 56) wrongChain
+                in
+                case newState of
+                    Wallet.WrongChain _ _ ->
+                        Expect.pass
+
+                    _ ->
+                        Expect.fail "Expected WrongChain"
+        , test "startConnect from Disconnected -> Connecting" <|
+            \_ ->
+                Wallet.startConnect Wallet.Disconnected
+                    |> Expect.equal Wallet.Connecting
+        , test "startConnect from Error -> Connecting" <|
+            \_ ->
+                Wallet.startConnect (Wallet.Error "oops")
+                    |> Expect.equal Wallet.Connecting
+        , test "startConnect from Connected -> no-op" <|
+            \_ ->
+                let
+                    connected =
+                        Wallet.update pulseChain (Wallet.WalletConnected validAddress 369) Wallet.Disconnected
+                in
+                Wallet.startConnect connected
+                    |> Wallet.isConnected
+                    |> Expect.equal True
+        , test "startConnect from ReadOnly -> no-op" <|
+            \_ ->
+                Wallet.startConnect Wallet.ReadOnly
+                    |> Wallet.isReadOnly
+                    |> Expect.equal True
         ]
 
 
@@ -178,6 +245,22 @@ helperTests =
         , test "isConnected is False for Connecting" <|
             \_ ->
                 Wallet.isConnected Wallet.Connecting |> Expect.equal False
+        , test "isReadOnly is True for ReadOnly" <|
+            \_ ->
+                Wallet.isReadOnly Wallet.ReadOnly |> Expect.equal True
+        , test "isReadOnly is False for Disconnected" <|
+            \_ ->
+                Wallet.isReadOnly Wallet.Disconnected |> Expect.equal False
+        , test "isReadOnly is False for Connected" <|
+            \_ ->
+                let
+                    connected =
+                        Wallet.update pulseChain (Wallet.WalletConnected validAddress 369) Wallet.Disconnected
+                in
+                Wallet.isReadOnly connected |> Expect.equal False
+        , test "isReadOnly is False for Connecting" <|
+            \_ ->
+                Wallet.isReadOnly Wallet.Connecting |> Expect.equal False
         , test "getAddress returns Nothing for Disconnected" <|
             \_ ->
                 Wallet.getAddress Wallet.Disconnected |> Expect.equal Nothing
@@ -265,11 +348,28 @@ decoderTests =
                 """{"tag":"accountChanged","address":"0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"}"""
                     |> D.decodeString Wallet.decoder
                     |> Expect.equal (Ok (Wallet.AccountChanged "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"))
-        , test "decodes error message" <|
+        , test "decodes failed message as WalletError" <|
             \_ ->
-                """{"tag":"error","message":"user rejected"}"""
+                """{"tag":"failed","error":"connection dropped"}"""
                     |> D.decodeString Wallet.decoder
-                    |> Expect.equal (Ok (Wallet.WalletError "user rejected"))
+                    |> Expect.equal (Ok (Wallet.WalletError "connection dropped"))
+        , test "unknown tag 'error' is now rejected (use 'failed')" <|
+            \_ ->
+                """{"tag":"error","error":"user rejected"}"""
+                    |> D.decodeString Wallet.decoder
+                    |> (\result ->
+                            case result of
+                                Err _ ->
+                                    Expect.pass
+
+                                Ok _ ->
+                                    Expect.fail "Expected decode failure: 'error' tag removed, use 'failed'"
+                       )
+        , test "decodes switchChainOk message" <|
+            \_ ->
+                """{"tag":"switchChainOk","chainId":369}"""
+                    |> D.decodeString Wallet.decoder
+                    |> Expect.equal (Ok (Wallet.SwitchChainOk 369))
         , test "fails on unknown tag" <|
             \_ ->
                 """{"tag":"unknown"}"""
@@ -294,4 +394,66 @@ decoderTests =
                                 Ok _ ->
                                     Expect.fail "Expected decode failure"
                        )
+        , test "decodes readOnly message as ReadOnlyMode" <|
+            \_ ->
+                """{"tag":"readOnly"}"""
+                    |> D.decodeString Wallet.decoder
+                    |> Expect.equal (Ok Wallet.ReadOnlyMode)
+        , test "ReadOnlyMode update transitions to ReadOnly state" <|
+            \_ ->
+                Wallet.update pulseChain Wallet.ReadOnlyMode Wallet.Disconnected
+                    |> Wallet.isReadOnly
+                    |> Expect.equal True
+        ]
+
+
+watchAssetTests : Test
+watchAssetTests =
+    describe "watchAsset"
+        [ test "watchAsset encode has correct tag" <|
+            \_ ->
+                case T.address validAddress of
+                    Just addr ->
+                        Wallet.encode (Wallet.watchAsset { address = addr, symbol = "HEX", decimals = 8, image = "" })
+                            |> D.decodeValue (D.field "tag" D.string)
+                            |> Expect.equal (Ok "watchAsset")
+
+                    Nothing ->
+                        Expect.fail "Invalid address"
+        , test "watchAsset encode has address field" <|
+            \_ ->
+                case T.address validAddress of
+                    Just addr ->
+                        Wallet.encode (Wallet.watchAsset { address = addr, symbol = "HEX", decimals = 8, image = "" })
+                            |> D.decodeValue (D.field "address" D.string)
+                            |> Expect.equal (Ok validAddress)
+
+                    Nothing ->
+                        Expect.fail "Invalid address"
+        , test "assetWatched decodes to AssetWatched" <|
+            \_ ->
+                """{"tag":"assetWatched"}"""
+                    |> D.decodeString Wallet.decoder
+                    |> Expect.equal (Ok Wallet.AssetWatched)
+        ]
+
+
+permissionsTests : Test
+permissionsTests =
+    describe "permissions"
+        [ test "requestPermissions encode has correct tag" <|
+            \_ ->
+                Wallet.encode Wallet.requestPermissions
+                    |> D.decodeValue (D.field "tag" D.string)
+                    |> Expect.equal (Ok "requestPermissions")
+        , test "getPermissions encode has correct tag" <|
+            \_ ->
+                Wallet.encode Wallet.getPermissions
+                    |> D.decodeValue (D.field "tag" D.string)
+                    |> Expect.equal (Ok "getPermissions")
+        , test "permissions message decodes to GotPermissions" <|
+            \_ ->
+                """{"tag":"permissions","permissions":["eth_accounts"]}"""
+                    |> D.decodeString Wallet.decoder
+                    |> Expect.equal (Ok (Wallet.GotPermissions [ "eth_accounts" ]))
         ]

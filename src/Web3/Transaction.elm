@@ -1,20 +1,25 @@
 module Web3.Transaction exposing
     ( Status(..)
     , Msg(..)
+    , TxCmd(..)
     , Receipt
     , EventLog
     , update
     , isTerminal
     , isPending
+    , transactionConfirmations
     , decoder
+    , encodeCmd
     , parseReceiptEvents
     )
 
 {-| Transaction lifecycle state machine.
 
-Every transaction goes through explicit states. Pattern matching
-forces you to handle every case — no "transaction failed silently"
-bugs.
+Every transaction goes through explicit states. Pattern matching forces you to
+handle every case — no "transaction failed silently" bugs. The state machine
+follows the TLA+ spec in `proofs/tla/TransactionSpec.tla`:
+terminal states never transition out (except via `TxReset`),
+and confirmation counts only increase.
 
     case tx.status of
         Idle ->
@@ -26,19 +31,43 @@ bugs.
         Submitted hash ->
             viewPendingWithHash hash
 
+        Confirming hash n ->
+            viewConfirming n
+
         Confirmed receipt ->
             viewSuccess receipt
 
         Failed err ->
             viewError err
 
-@docs Status, Msg, Receipt, EventLog
-@docs update, isTerminal, isPending
-@docs decoder, parseReceiptEvents
+        Rejected ->
+            viewRejected
+
+To poll for a receipt after submission, encode a `RequestReceipt` command:
+
+    case tx.status of
+        Submitted hash ->
+            ( model
+            , web3Cmd (Tx.encodeCmd (Tx.RequestReceipt hash "my-tx"))
+            )
+        _ ->
+            ( model, Cmd.none )
+
+To reset a terminal transaction back to `Idle`:
+
+    Tx.update Tx.TxReset tx.status
+
+Related modules: `Web3.Contract.Send` to build and encode write calls;
+`Web3.Contract.Call` to simulate writes before broadcasting.
+
+@docs Status, Msg, TxCmd, Receipt, EventLog
+@docs update, isTerminal, isPending, transactionConfirmations
+@docs encodeCmd, decoder, parseReceiptEvents
 
 -}
 
 import Json.Decode as D
+import Json.Encode as E
 import Web3.Abi.Decode as AbiDecode
 import Web3.Types as T
 
@@ -77,6 +106,12 @@ type alias Receipt =
     }
 
 
+{-| Commands to send to the JS transaction port.
+-}
+type TxCmd
+    = RequestReceipt T.TxHash String
+
+
 {-| Messages from the JS transaction port.
 -}
 type Msg
@@ -85,6 +120,8 @@ type Msg
     | TxConfirmed ReceiptJson
     | TxFailed String
     | TxRejected
+    | TxReset
+    | TxReceiptNotFound String
 
 
 type alias ReceiptJson =
@@ -108,18 +145,38 @@ type alias EventLogJson =
 {-| Update transaction status from a port message.
 
 Transitions are guarded to match the TLA+ GuardedNext specification:
-- Terminal states (Confirmed, Failed, Rejected) never transition out.
+- Terminal states (Confirmed, Failed, Rejected) never transition out, except via TxReset.
 - TxSubmitted is only accepted from AwaitingSignature.
 - TxConfirmation is only accepted from Submitted or Confirming.
-- TxFailed and TxRejected are accepted from any non-terminal state.
+- TxFailed is accepted from any non-terminal state.
+- TxRejected from AwaitingSignature → Rejected; from Submitted/Confirming → Failed.
+- TxReset from any terminal state → Idle; from non-terminal states → no-op.
+- TxReceiptNotFound is a no-op; the app can schedule another RequestReceipt.
 -}
 update : Msg -> Status -> Status
 update msg status =
-    if isTerminal status then
-        status
+    case msg of
+        TxReset ->
+            if isTerminal status then
+                Idle
 
-    else
-        case msg of
+            else
+                status
+
+        TxReceiptNotFound _ ->
+            status
+
+        _ ->
+            if isTerminal status then
+                status
+
+            else
+                updateNonTerminal msg status
+
+
+updateNonTerminal : Msg -> Status -> Status
+updateNonTerminal msg status =
+    case msg of
             TxSubmitted hash ->
                 case status of
                     AwaitingSignature ->
@@ -173,8 +230,20 @@ update msg status =
                     AwaitingSignature ->
                         Rejected
 
+                    Submitted _ ->
+                        Failed "transaction rejected by wallet"
+
+                    Confirming _ _ ->
+                        Failed "transaction rejected by wallet"
+
                     _ ->
                         status
+
+            TxReset ->
+                status
+
+            TxReceiptNotFound _ ->
+                status
 
 
 confirmReceipt : ReceiptJson -> Status
@@ -245,6 +314,24 @@ isPending status =
             False
 
 
+{-| Number of confirmations for a confirmed transaction given the current block number.
+-}
+transactionConfirmations : Int -> Receipt -> Int
+transactionConfirmations currentBlock receipt =
+    max 0 (currentBlock - receipt.blockNumber)
+
+
+{-| Encode a TxCmd for the JS port.
+-}
+encodeCmd : TxCmd -> E.Value
+encodeCmd (RequestReceipt hash id) =
+    E.object
+        [ ( "tag", E.string "getTransactionReceipt" )
+        , ( "hash", E.string (T.txHashToString hash) )
+        , ( "id", E.string id )
+        ]
+
+
 {-| Decode transaction messages from JS port.
 -}
 decoder : D.Decoder Msg
@@ -293,6 +380,19 @@ decoder =
 
                     "rejected" ->
                         D.succeed TxRejected
+
+                    "receiptResult" ->
+                        D.map TxConfirmed
+                            (D.map5 ReceiptJson
+                                (D.field "hash" D.string)
+                                (D.field "blockNumber" D.int)
+                                (D.field "gasUsed" D.string)
+                                (D.field "status" D.bool)
+                                (D.field "logs" (D.list eventLogJsonDecoder))
+                            )
+
+                    "receiptNotFound" ->
+                        D.map TxReceiptNotFound (D.field "id" D.string)
 
                     _ ->
                         D.fail ("Unknown tx message: " ++ tag)

@@ -13,21 +13,41 @@ module Web3.Types exposing
     , chainIdToInt
     , hexString
     , hexStringToString
+    , encodeBlockNumber
     )
 
-{-| Core types for EVM interaction.
+{-| Core opaque types for EVM interaction.
 
-All types are opaque — you can't accidentally pass a TxHash where an Address
-is expected. Construction validates format.
+All types are opaque — you can't accidentally pass a `TxHash` where an `Address`
+is expected. Construction validates format and returns `Maybe` so invalid input
+is a compile-time-visible code path, not a runtime crash.
+
+    import Web3.Types as T
+
+    -- Validate on input boundary (e.g. from a URL param or user field):
+    case T.address rawString of
+        Just addr ->
+            -- addr : T.Address — safe to use everywhere
+        Nothing ->
+            -- show validation error
+
+    -- BlockNumber is used by Contract.Call, Block, Fee, and Query:
+    T.encodeBlockNumber T.Latest    == Json.Encode.string "latest"
+    T.encodeBlockNumber (T.BlockNum 1000) == Json.Encode.int 1000
+
+`Wei` is an alias for `Web3.BigInt.BigInt` — use `Web3.Units.formatEther` to
+convert to a human-readable string.
 
 @docs Address, TxHash, BlockNumber, ChainId, Wei, HexString
 @docs address, addressToString
 @docs txHash, txHashToString
 @docs chainId, chainIdToInt
 @docs hexString, hexStringToString
+@docs encodeBlockNumber
 
 -}
 
+import Json.Encode as E
 import Web3.BigInt exposing (BigInt)
 
 
@@ -174,3 +194,21 @@ isHexDigit c =
                 || (code >= Char.toCode 'a' && code <= Char.toCode 'f')
                 || (code >= Char.toCode 'A' && code <= Char.toCode 'F')
            )
+
+
+{-| Encode a BlockNumber for JSON-RPC (e.g. for eth_call block parameter).
+-}
+encodeBlockNumber : BlockNumber -> E.Value
+encodeBlockNumber bn =
+    case bn of
+        BlockNum n ->
+            E.int n
+
+        Latest ->
+            E.string "latest"
+
+        Pending ->
+            E.string "pending"
+
+        Earliest ->
+            E.string "earliest"

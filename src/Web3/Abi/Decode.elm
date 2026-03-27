@@ -5,6 +5,19 @@ module Web3.Abi.Decode exposing
     , bool
     , string
     , bytes32
+    , uint8
+    , uint16
+    , uint32
+    , uint64
+    , uint128
+    , hexSlot
+    , uint256Slot
+    , addressSlot
+    , boolSlot
+    , stringSlot
+    , listSlot
+    , tuple2Hex
+    , tuple3Hex
     , decodeRevertReason
     )
 
@@ -12,6 +25,9 @@ module Web3.Abi.Decode exposing
 received through ports from the JS Web3 layer.
 
 @docs address, uint256, int256, bool, string, bytes32
+@docs uint8, uint16, uint32, uint64, uint128
+@docs hexSlot, uint256Slot, addressSlot, boolSlot, stringSlot, listSlot
+@docs tuple2Hex, tuple3Hex
 @docs decodeRevertReason
 
 -}
@@ -39,18 +55,117 @@ address =
 
 
 {-| Decode a uint256 return value as a BigInt.
+Accepts both decimal strings ("100") and 0x-prefixed hex strings ("0x64").
 -}
 uint256 : D.Decoder BigInt
 uint256 =
     D.string
         |> D.andThen
             (\s ->
-                case BigInt.fromString s of
+                let
+                    parse =
+                        if String.startsWith "0x" s || String.startsWith "0X" s then
+                            BigInt.fromHexString s
+
+                        else
+                            BigInt.fromString s
+                in
+                case parse of
                     Just n ->
                         D.succeed n
 
                     Nothing ->
                         D.fail ("Invalid uint256: " ++ s)
+            )
+
+
+{-| Decode a uint8 return value as an Elm Int (validated 0–255).
+-}
+uint8 : D.Decoder Int
+uint8 =
+    uint256
+        |> D.andThen
+            (\n ->
+                if BigInt.lte n (BigInt.fromInt 255) && not (BigInt.lt n BigInt.zero) then
+                    case String.toInt (BigInt.toString n) of
+                        Just i ->
+                            D.succeed i
+
+                        Nothing ->
+                            D.fail "uint8: internal conversion error"
+
+                else
+                    D.fail ("uint8 out of range: " ++ BigInt.toString n)
+            )
+
+
+{-| Decode a uint16 return value as an Elm Int (validated 0–65535).
+-}
+uint16 : D.Decoder Int
+uint16 =
+    uint256
+        |> D.andThen
+            (\n ->
+                if BigInt.lte n (BigInt.fromInt 65535) && not (BigInt.lt n BigInt.zero) then
+                    case String.toInt (BigInt.toString n) of
+                        Just i ->
+                            D.succeed i
+
+                        Nothing ->
+                            D.fail "uint16: internal conversion error"
+
+                else
+                    D.fail ("uint16 out of range: " ++ BigInt.toString n)
+            )
+
+
+{-| Decode a uint32 return value as an Elm Int (validated 0–4294967295).
+-}
+uint32 : D.Decoder Int
+uint32 =
+    uint256
+        |> D.andThen
+            (\n ->
+                if BigInt.lte n (BigInt.fromInt 4294967295) && not (BigInt.lt n BigInt.zero) then
+                    case String.toInt (BigInt.toString n) of
+                        Just i ->
+                            D.succeed i
+
+                        Nothing ->
+                            D.fail "uint32: internal conversion error"
+
+                else
+                    D.fail ("uint32 out of range: " ++ BigInt.toString n)
+            )
+
+
+{-| Decode a uint64 return value as a BigInt (exceeds JS/Elm safe Int range).
+-}
+uint64 : D.Decoder BigInt
+uint64 =
+    uint256
+        |> D.andThen
+            (\n ->
+                if not (BigInt.lt n BigInt.zero) then
+                    D.succeed n
+
+                else
+                    D.fail ("uint64 out of range: " ++ BigInt.toString n)
+            )
+
+
+{-| Decode a uint128 return value as a BigInt.
+-}
+uint128 : D.Decoder BigInt
+uint128 =
+    uint256
+        |> D.andThen
+            (\n ->
+                if not (BigInt.lt n BigInt.zero) then
+                    D.succeed n
+
+                else
+                    D.fail ("uint128 out of range: " ++ BigInt.toString n)
             )
 
 
@@ -89,6 +204,148 @@ bytes32 =
                 else
                     D.fail ("Invalid bytes32: " ++ s)
             )
+
+
+{-| Extract the 64-character hex of the 32-byte word at slot index `n`
+(0-indexed) from a 0x-prefixed ABI-encoded hex string.
+
+    hexSlot 0 "0x0000...0064" == "0000...0064"
+
+-}
+hexSlot : Int -> String -> String
+hexSlot n hex =
+    String.dropLeft 2 hex
+        |> String.dropLeft (n * 64)
+        |> String.left 64
+
+
+{-| Decode a uint256 from slot `n` of a raw 0x-hex ABI response.
+-}
+uint256Slot : Int -> String -> Maybe BigInt
+uint256Slot n hex =
+    BigInt.fromHexString ("0x" ++ hexSlot n hex)
+
+
+{-| Decode an Address from slot `n` of a raw 0x-hex ABI response.
+Addresses are right-aligned in the 32-byte slot.
+-}
+addressSlot : Int -> String -> Maybe T.Address
+addressSlot n hex =
+    let
+        slot =
+            hexSlot n hex
+
+        addr =
+            "0x" ++ String.right 40 slot
+    in
+    T.address addr
+
+
+{-| Decode a bool from slot `n` of a raw 0x-hex ABI response.
+-}
+boolSlot : Int -> String -> Maybe Bool
+boolSlot n hex =
+    case String.right 1 (hexSlot n hex) of
+        "0" ->
+            Just False
+
+        "1" ->
+            Just True
+
+        _ ->
+            Nothing
+
+
+{-| Decode a dynamic UTF-8 string from slot `n` of a raw 0x-hex ABI response.
+Slot `n` contains an offset pointer; the string length and data follow at
+that offset.
+-}
+stringSlot : Int -> String -> Maybe String
+stringSlot n hex =
+    let
+        raw =
+            String.dropLeft 2 hex
+
+        offsetHex =
+            String.dropLeft (n * 64) raw |> String.left 64
+
+        offsetBytes =
+            hexToInt offsetHex
+
+        lenHex =
+            String.dropLeft (offsetBytes * 2) raw |> String.left 64
+
+        len =
+            hexToInt lenHex
+
+        dataHex =
+            String.dropLeft (offsetBytes * 2 + 64) raw |> String.left (len * 2)
+    in
+    hexUtf8ToString dataHex
+
+
+{-| Decode a dynamic array from slot `n`. Each element is decoded by calling
+`elemDecoder slotIndex fullHex`. Works for static-element arrays (uint256[],
+address[], etc.) where elements are stored consecutively.
+-}
+listSlot : Int -> (Int -> String -> Maybe a) -> String -> Maybe (List a)
+listSlot n elemDecoder hex =
+    let
+        raw =
+            String.dropLeft 2 hex
+
+        offsetHex =
+            String.dropLeft (n * 64) raw |> String.left 64
+
+        offsetBytes =
+            hexToInt offsetHex
+
+        lenHex =
+            String.dropLeft (offsetBytes * 2) raw |> String.left 64
+
+        count =
+            hexToInt lenHex
+
+        firstElemSlot =
+            (offsetBytes // 32) + 1
+    in
+    List.range 0 (count - 1)
+        |> List.map (\i -> elemDecoder (firstElemSlot + i) hex)
+        |> List.foldr (Maybe.map2 (::)) (Just [])
+
+
+{-| Decode a static 2-tuple from the head of a 0x-hex ABI response.
+Each decoder is called with its slot index (0, 1).
+-}
+tuple2Hex :
+    (Int -> String -> Maybe a)
+    -> (Int -> String -> Maybe b)
+    -> String
+    -> Maybe ( a, b )
+tuple2Hex da db hex =
+    case ( da 0 hex, db 1 hex ) of
+        ( Just a, Just b ) ->
+            Just ( a, b )
+
+        _ ->
+            Nothing
+
+
+{-| Decode a static 3-tuple from the head of a 0x-hex ABI response.
+-}
+tuple3Hex :
+    (Int -> String -> Maybe a)
+    -> (Int -> String -> Maybe b)
+    -> (Int -> String -> Maybe c)
+    -> String
+    -> Maybe ( a, b, c )
+tuple3Hex da db dc hex =
+    case ( da 0 hex, db 1 hex, dc 2 hex ) of
+        ( Just a, Just b, Just c ) ->
+            Just ( a, b, c )
+
+        _ ->
+            Nothing
 
 
 {-| Attempt to decode an EVM revert reason from raw revert data.

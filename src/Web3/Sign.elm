@@ -4,63 +4,76 @@ module Web3.Sign exposing
     , TypeField
     , typedData
     , encode
+    , personalSign
     , signatureDecoder
+    , SignState(..)
+    , SignMsg(..)
+    , signUpdate
+    , isSignTerminal
+    , startSign
     )
 
-{-| EIP-712 typed data signing.
+{-| EIP-712 typed data signing and EIP-191 personal signing.
 
 Build a typed data request, encode it for the JS port, decode the signature response.
+Use the `SignState` machine to track the lifecycle of a single sign request.
 
     import Dict
     import Json.Encode as E
     import Web3.Sign as Sign
 
-    permitDomain : Sign.Domain
-    permitDomain =
-        { name = Just "MyToken"
-        , version = Just "1"
-        , chainId = Just 1
-        , verifyingContract = Just tokenAddress
-        , salt = Nothing
-        }
-
-    permitTypes : Dict.Dict String (List Sign.TypeField)
-    permitTypes =
-        Dict.fromList
-            [ ( "Permit"
-              , [ { name = "owner", typeName = "address" }
-                , { name = "spender", typeName = "address" }
-                , { name = "value", typeName = "uint256" }
-                , { name = "nonce", typeName = "uint256" }
-                , { name = "deadline", typeName = "uint256" }
-                ]
-              )
-            ]
-
-    permitRequest : Sign.TypedData
-    permitRequest =
+    permitRequest : T.Address -> T.Address -> BigInt -> Int -> Sign.TypedData
+    permitRequest owner spender value nonce =
         Sign.typedData
-            { domain = permitDomain
-            , types = permitTypes
-            , primaryType = "Permit"
-            , message =
-                E.object
-                    [ ( "owner", E.string "0x..." )
-                    , ( "spender", E.string "0x..." )
-                    , ( "value", E.string "1000000000000000000" )
-                    , ( "nonce", E.int 0 )
-                    , ( "deadline", E.int 9999999999 )
+            { domain =
+                { name = Just "MyToken", version = Just "1"
+                , chainId = Just 369, verifyingContract = Just tokenAddress
+                , salt = Nothing
+                }
+            , types =
+                Dict.fromList
+                    [ ( "Permit"
+                      , [ { name = "owner",    typeName = "address" }
+                        , { name = "spender",  typeName = "address" }
+                        , { name = "value",    typeName = "uint256" }
+                        , { name = "nonce",    typeName = "uint256" }
+                        , { name = "deadline", typeName = "uint256" }
+                        ]
+                      )
                     ]
+            , primaryType = "Permit"
+            , message = E.object [ ... ]
             }
 
     -- Send via port:
-    --   web3Cmd (Sign.encode "permit-1" signerAddress permitRequest)
-    --
-    -- Receive via port:
-    --   D.decodeValue Sign.signatureDecoder incoming
+    web3Cmd (Sign.encode "permit-1" signerAddress (permitRequest owner spender value nonce))
+
+    -- Receive via port (use signatureDecoder for the raw sig string):
+    case D.decodeValue Sign.signatureDecoder incoming of
+        Ok sig -> -- sig is the 0x-prefixed signature
+        Err _ -> -- not a sign response
+
+**Sign state machine** — tracks one in-flight request:
+
+    type SignState
+        = SignIdle
+        | SignPending String          -- id
+        | Signed String String        -- id, signature
+        | SignFailed String String    -- id, error
+        | SignRejected String         -- id
+
+    -- Usage:
+    ( { model | signState = Sign.startSign "permit-1" model.signState }
+    , web3Cmd (Sign.encode "permit-1" addr request)
+    )
+
+    -- On port response:
+    newSignState = Sign.signUpdate signMsg model.signState
 
 @docs TypedData, Domain, TypeField
-@docs typedData, encode, signatureDecoder
+@docs typedData, encode, personalSign, signatureDecoder
+@docs SignState, SignMsg
+@docs startSign, signUpdate, isSignTerminal
 
 -}
 
@@ -130,6 +143,132 @@ encode id from (TypedData td) =
         , ( "from", E.string (T.addressToString from) )
         , ( "data", encodeTypedData td )
         ]
+
+
+{-| Sign an arbitrary message with `personal_sign` (EIP-191).
+
+Used for login flows and simple off-chain authentication. The wallet
+will display the raw message to the user before signing.
+
+    web3Cmd (Sign.personalSign "login-1" signerAddress "Sign in to MyDapp")
+
+Responses arrive on the same `signed` tag as EIP-712 — use `signatureDecoder`.
+
+-}
+personalSign : String -> T.Address -> String -> E.Value
+personalSign id from message =
+    E.object
+        [ ( "tag", E.string "personalSign" )
+        , ( "id", E.string id )
+        , ( "from", E.string (T.addressToString from) )
+        , ( "message", E.string message )
+        ]
+
+
+{-| Signing state machine. Tracks the lifecycle of a single sign request.
+
+  - `SignIdle` — no sign request in progress
+  - `SignPending id` — awaiting user approval for request `id`
+  - `Signed id sig` — user approved; `sig` is the 0x-prefixed signature
+  - `SignFailed id err` — signing failed (wallet error, network error)
+  - `SignRejected id` — user explicitly cancelled in wallet UI
+
+-}
+type SignState
+    = SignIdle
+    | SignPending String
+    | Signed String String
+    | SignFailed String String
+    | SignRejected String
+
+
+{-| Messages from the JS sign port.
+-}
+type SignMsg
+    = SignResponse String String
+      -- ^ id, signature (tag:'signed')
+    | SignError String String
+      -- ^ id, error message (tag:'failed' from sign context)
+    | SignCancel String
+      -- ^ id (tag:'rejected' from sign context)
+
+
+{-| True if the sign state is terminal (no more updates expected).
+-}
+isSignTerminal : SignState -> Bool
+isSignTerminal state =
+    case state of
+        Signed _ _ ->
+            True
+
+        SignFailed _ _ ->
+            True
+
+        SignRejected _ ->
+            True
+
+        _ ->
+            False
+
+
+{-| Transition from `SignIdle` to `SignPending` for the given correlation id.
+All other states are unchanged (a sign already in flight is not replaced).
+-}
+startSign : String -> SignState -> SignState
+startSign id state =
+    case state of
+        SignIdle ->
+            SignPending id
+
+        _ ->
+            state
+
+
+{-| Update sign state from a port message.
+Terminal states never transition out.
+-}
+signUpdate : SignMsg -> SignState -> SignState
+signUpdate msg state =
+    if isSignTerminal state then
+        state
+
+    else
+        case msg of
+            SignResponse id sig ->
+                case state of
+                    SignPending pendingId ->
+                        if pendingId == id then
+                            Signed id sig
+
+                        else
+                            state
+
+                    _ ->
+                        state
+
+            SignError id err ->
+                case state of
+                    SignPending pendingId ->
+                        if pendingId == id then
+                            SignFailed id err
+
+                        else
+                            state
+
+                    _ ->
+                        state
+
+            SignCancel id ->
+                case state of
+                    SignPending pendingId ->
+                        if pendingId == id then
+                            SignRejected id
+
+                        else
+                            state
+
+                    _ ->
+                        state
 
 
 {-| Decode the `signed` response from the JS port.

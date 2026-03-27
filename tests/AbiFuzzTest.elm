@@ -22,7 +22,7 @@ Properties verified:
 
 -}
 
-import BigInt exposing (BigInt)
+import Web3.BigInt as BigInt exposing (BigInt)
 import Expect
 import Fuzz exposing (Fuzzer)
 import Json.Decode as D

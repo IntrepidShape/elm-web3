@@ -5,27 +5,41 @@ module Web3.Contract.Send exposing
     , withGasLimit
     , encode
     , estimateGas
+    , deployCall
+    , encodeRawSend
     )
 
 {-| Type-safe contract write calls (eth\_sendTransaction).
 
+Build a write call, encode it for the JS port, optionally estimate gas first.
+
     -- Non-payable: approve
     approve : Address -> BigInt -> WriteCall
     approve spender amount =
-        writeCall { ... }
+        writeCall
+            { contract = tokenAddress
+            , method = "approve"
+            , args = [ Encode.address spender, Encode.uint256 amount ]
+            }
 
     -- Payable: buy
     buy : BigInt -> Wei -> WriteCall
     buy minTokens value =
-        payableCall { ..., value = value }
+        payableCall
+            { contract = routerAddress
+            , method = "buy"
+            , args = [ Encode.uint256 minTokens ]
+            , value = value
+            }
 
 @docs WriteCall
-@docs writeCall, payableCall, withGasLimit, encode, estimateGas
+@docs writeCall, payableCall, withGasLimit
+@docs encode, estimateGas, deployCall, encodeRawSend
 
 -}
 
-import Web3.BigInt as BigInt exposing (BigInt)
 import Json.Encode as E
+import Web3.BigInt as BigInt exposing (BigInt)
 import Web3.Types as T
 
 
@@ -108,6 +122,34 @@ estimateGas (WriteCall call) =
                         []
                )
         )
+
+
+{-| Encode a contract deployment for submission via the port. -}
+deployCall :
+    { bytecode : String
+    , args : List E.Value
+    , gasLimit : Maybe Int
+    } -> E.Value
+deployCall opts =
+    E.object
+        ([ ( "tag", E.string "deploy" )
+         , ( "bytecode", E.string opts.bytecode )
+         , ( "args", E.list identity opts.args )
+         ]
+            ++ (case opts.gasLimit of
+                    Just g -> [ ( "gasLimit", E.int g ) ]
+                    Nothing -> []
+               )
+        )
+
+
+{-| Encode a raw signed transaction for broadcast via the port. -}
+encodeRawSend : String -> E.Value
+encodeRawSend rawHex =
+    E.object
+        [ ( "tag", E.string "sendRawTransaction" )
+        , ( "rawTx", E.string rawHex )
+        ]
 
 
 {-| Encode a write call for the JS port.

@@ -91,6 +91,7 @@ msgFuzzer =
         , Fuzz.map Wallet.AccountChanged addressStringFuzzer
         , Fuzz.map Wallet.WalletError Fuzz.string
         , Fuzz.constant (Wallet.WalletsDiscovered [])
+        , Fuzz.map Wallet.SwitchChainOk chainIdIntFuzzer
         ]
 
 
@@ -133,6 +134,9 @@ stateTag state =
         Wallet.Disconnected ->
             "Disconnected"
 
+        Wallet.ReadOnly ->
+            "ReadOnly"
+
         Wallet.Connecting ->
             "Connecting"
 
@@ -160,6 +164,7 @@ suite =
         , getAddressConsistencyTest
         , getChainIdConsistencyTest
         , addressRoundTripTest
+        , errorRecoverableTest
         ]
 
 
@@ -176,6 +181,9 @@ neverCrashesTest =
             in
             case finalState of
                 Wallet.Disconnected ->
+                    Expect.pass
+
+                Wallet.ReadOnly ->
                     Expect.pass
 
                 Wallet.Connecting ->
@@ -210,12 +218,12 @@ connectedAddressInvariantTest =
                     Expect.pass
 
 
-{-| WalletDisconnected always transitions to Disconnected from any state, no
-matter how many prior messages have been applied.
+{-| WalletDisconnected transitions to Disconnected from any state except ReadOnly.
+ReadOnly is a special mode (rpcUrl present, no wallet) that persists through disconnect.
 -}
 disconnectedReachableTest : Test
 disconnectedReachableTest =
-    fuzz2 initialStateFuzzer (Fuzz.list msgFuzzer) "WalletDisconnected always leads to Disconnected" <|
+    fuzz2 initialStateFuzzer (Fuzz.list msgFuzzer) "WalletDisconnected leads to Disconnected or stays ReadOnly" <|
         \initState msgs ->
             let
                 anyState =
@@ -224,15 +232,20 @@ disconnectedReachableTest =
                 afterDisconnect =
                     Wallet.update expectedChain Wallet.WalletDisconnected anyState
             in
-            afterDisconnect
-                |> Expect.equal Wallet.Disconnected
+            case anyState of
+                Wallet.ReadOnly ->
+                    afterDisconnect |> Expect.equal Wallet.ReadOnly
+
+                _ ->
+                    afterDisconnect |> Expect.equal Wallet.Disconnected
 
 
-{-| WalletError always transitions to Error from any state.
+{-| WalletError transitions to Error from any state except ReadOnly.
+ReadOnly mode ignores WalletError to stay read-accessible.
 -}
 errorReachableTest : Test
 errorReachableTest =
-    fuzz3 initialStateFuzzer (Fuzz.list msgFuzzer) Fuzz.string "WalletError always leads to Error" <|
+    fuzz3 initialStateFuzzer (Fuzz.list msgFuzzer) Fuzz.string "WalletError leads to Error or stays ReadOnly" <|
         \initState msgs errMsg ->
             let
                 anyState =
@@ -241,15 +254,20 @@ errorReachableTest =
                 afterError =
                     Wallet.update expectedChain (Wallet.WalletError errMsg) anyState
             in
-            case afterError of
-                Wallet.Error _ ->
-                    Expect.pass
+            case anyState of
+                Wallet.ReadOnly ->
+                    afterError |> Expect.equal Wallet.ReadOnly
 
                 _ ->
-                    Expect.fail
-                        ("Expected Error state after WalletError, got: "
-                            ++ stateTag afterError
-                        )
+                    case afterError of
+                        Wallet.Error _ ->
+                            Expect.pass
+
+                        _ ->
+                            Expect.fail
+                                ("Expected Error state after WalletError, got: "
+                                    ++ stateTag afterError
+                                )
 
 
 {-| isConnected and getAddress are perfectly consistent: both reflect
@@ -311,3 +329,19 @@ addressRoundTripTest =
 
                 Nothing ->
                     Expect.pass
+
+
+{-| Error state is always recoverable: WalletDisconnected from Error always yields Disconnected.
+-}
+errorRecoverableTest : Test
+errorRecoverableTest =
+    fuzz Fuzz.string "Error state is always recoverable via WalletDisconnected" <|
+        \errMsg ->
+            let
+                errState =
+                    Wallet.Error errMsg
+
+                afterDisconnect =
+                    Wallet.update expectedChain Wallet.WalletDisconnected errState
+            in
+            afterDisconnect |> Expect.equal Wallet.Disconnected

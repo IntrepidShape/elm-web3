@@ -26,6 +26,22 @@ emptyReceipt =
     }
 
 
+{-| Helper: drive a transaction through the proper state chain.
+AwaitingSignature → Submitted (via TxSubmitted).
+-}
+inSubmittedState : Tx.Status
+inSubmittedState =
+    Tx.update (Tx.TxSubmitted validHash) Tx.AwaitingSignature
+
+
+{-| Helper: drive to Confirming state.
+AwaitingSignature → Submitted → Confirming (via TxConfirmation).
+-}
+inConfirmingState : Tx.Status
+inConfirmingState =
+    Tx.update (Tx.TxConfirmation validHash 1) inSubmittedState
+
+
 txStatusLabel : Tx.Status -> String
 txStatusLabel status =
     case status of
@@ -44,6 +60,7 @@ suite =
         [ stateTransitionTests
         , terminalPendingTests
         , decoderTests
+        , confirmationsTests
         , parseReceiptEventsTests
         ]
 
@@ -51,17 +68,17 @@ suite =
 stateTransitionTests : Test
 stateTransitionTests =
     describe "update state transitions"
-        [ test "Idle + TxSubmitted valid hash -> Submitted" <|
+        [ test "AwaitingSignature + TxSubmitted valid hash -> Submitted" <|
             \_ ->
-                case Tx.update (Tx.TxSubmitted validHash) Tx.Idle of
+                case Tx.update (Tx.TxSubmitted validHash) Tx.AwaitingSignature of
                     Tx.Submitted _ ->
                         Expect.pass
 
                     s ->
                         Expect.fail ("Expected Submitted, got: " ++ txStatusLabel s)
-        , test "Idle + TxSubmitted invalid hash -> Failed" <|
+        , test "AwaitingSignature + TxSubmitted invalid hash -> Failed" <|
             \_ ->
-                case Tx.update (Tx.TxSubmitted "not-a-hash") Tx.Idle of
+                case Tx.update (Tx.TxSubmitted "not-a-hash") Tx.AwaitingSignature of
                     Tx.Failed _ ->
                         Expect.pass
 
@@ -69,14 +86,7 @@ stateTransitionTests =
                         Expect.fail ("Expected Failed, got: " ++ txStatusLabel s)
         , test "Submitted + TxConfirmation -> Confirming with count" <|
             \_ ->
-                let
-                    submitted =
-                        Tx.update (Tx.TxSubmitted validHash) Tx.Idle
-
-                    newState =
-                        Tx.update (Tx.TxConfirmation validHash 1) submitted
-                in
-                case newState of
+                case Tx.update (Tx.TxConfirmation validHash 1) inSubmittedState of
                     Tx.Confirming _ count ->
                         count |> Expect.equal 1
 
@@ -84,14 +94,7 @@ stateTransitionTests =
                         Expect.fail ("Expected Confirming, got: " ++ txStatusLabel s)
         , test "Confirming + TxConfirmed -> Confirmed with receipt data" <|
             \_ ->
-                let
-                    confirming =
-                        Tx.update (Tx.TxConfirmation validHash 1) Tx.Idle
-
-                    newState =
-                        Tx.update (Tx.TxConfirmed emptyReceipt) confirming
-                in
-                case newState of
+                case Tx.update (Tx.TxConfirmed emptyReceipt) inConfirmingState of
                     Tx.Confirmed receipt ->
                         receipt.blockNumber |> Expect.equal 100
 
@@ -102,19 +105,16 @@ stateTransitionTests =
                 let
                     badReceipt =
                         { emptyReceipt | txHash = "bad-hash" }
-
-                    newState =
-                        Tx.update (Tx.TxConfirmed badReceipt) Tx.Idle
                 in
-                case newState of
+                case Tx.update (Tx.TxConfirmed badReceipt) inConfirmingState of
                     Tx.Failed _ ->
                         Expect.pass
 
                     s ->
                         Expect.fail ("Expected Failed, got: " ++ txStatusLabel s)
-        , test "any state + TxFailed -> Failed with message" <|
+        , test "any non-terminal state + TxFailed -> Failed with message" <|
             \_ ->
-                Tx.update (Tx.TxFailed "out of gas") Tx.Idle
+                Tx.update (Tx.TxFailed "out of gas") Tx.AwaitingSignature
                     |> (\s ->
                             case s of
                                 Tx.Failed err ->
@@ -123,9 +123,9 @@ stateTransitionTests =
                                 _ ->
                                     Expect.fail "Expected Failed"
                        )
-        , test "any state + TxRejected -> Rejected" <|
+        , test "AwaitingSignature + TxRejected -> Rejected" <|
             \_ ->
-                Tx.update Tx.TxRejected Tx.Idle
+                Tx.update Tx.TxRejected Tx.AwaitingSignature
                     |> Expect.equal Tx.Rejected
         , test "TxConfirmed filters out logs with invalid addresses" <|
             \_ ->
@@ -147,11 +147,8 @@ stateTransitionTests =
                                   }
                                 ]
                         }
-
-                    newState =
-                        Tx.update (Tx.TxConfirmed receiptWithLogs) Tx.Idle
                 in
-                case newState of
+                case Tx.update (Tx.TxConfirmed receiptWithLogs) inConfirmingState of
                     Tx.Confirmed receipt ->
                         List.length receipt.logs |> Expect.equal 1
 
@@ -160,18 +157,75 @@ stateTransitionTests =
         , test "TxConfirmation with invalid hash is a no-op" <|
             \_ ->
                 let
-                    submitted =
-                        Tx.update (Tx.TxSubmitted validHash) Tx.Idle
-
                     newState =
-                        Tx.update (Tx.TxConfirmation "bad-hash" 1) submitted
+                        Tx.update (Tx.TxConfirmation "bad-hash" 1) inSubmittedState
                 in
-                case ( submitted, newState ) of
+                case ( inSubmittedState, newState ) of
                     ( Tx.Submitted _, Tx.Submitted _ ) ->
                         Expect.pass
 
                     _ ->
                         Expect.fail "Expected state to remain Submitted"
+        , test "TxConfirmed from Submitted (fast chain, no Confirming step)" <|
+            \_ ->
+                case Tx.update (Tx.TxConfirmed emptyReceipt) inSubmittedState of
+                    Tx.Confirmed receipt ->
+                        receipt.blockNumber |> Expect.equal 100
+
+                    s ->
+                        Expect.fail ("Expected Confirmed, got: " ++ txStatusLabel s)
+        , test "TxRejected from Submitted -> Failed" <|
+            \_ ->
+                case Tx.update Tx.TxRejected inSubmittedState of
+                    Tx.Failed _ ->
+                        Expect.pass
+
+                    s ->
+                        Expect.fail ("Expected Failed, got: " ++ txStatusLabel s)
+        , test "TxRejected from Confirming -> Failed" <|
+            \_ ->
+                case Tx.update Tx.TxRejected inConfirmingState of
+                    Tx.Failed _ ->
+                        Expect.pass
+
+                    s ->
+                        Expect.fail ("Expected Failed, got: " ++ txStatusLabel s)
+        , test "TxReset from Confirmed -> Idle" <|
+            \_ ->
+                let
+                    confirmed =
+                        Tx.update (Tx.TxConfirmed emptyReceipt) inConfirmingState
+                in
+                Tx.update Tx.TxReset confirmed
+                    |> Expect.equal Tx.Idle
+        , test "TxReset from Failed -> Idle" <|
+            \_ ->
+                Tx.update Tx.TxReset (Tx.Failed "error")
+                    |> Expect.equal Tx.Idle
+        , test "TxReset from Rejected -> Idle" <|
+            \_ ->
+                Tx.update Tx.TxReset Tx.Rejected
+                    |> Expect.equal Tx.Idle
+        , test "TxReset from Submitted is a no-op (mid-flight)" <|
+            \_ ->
+                case Tx.update Tx.TxReset inSubmittedState of
+                    Tx.Submitted _ ->
+                        Expect.pass
+
+                    s ->
+                        Expect.fail ("Expected Submitted unchanged, got: " ++ txStatusLabel s)
+        , test "TxReset from AwaitingSignature is a no-op (mid-flight)" <|
+            \_ ->
+                Tx.update Tx.TxReset Tx.AwaitingSignature
+                    |> Expect.equal Tx.AwaitingSignature
+        , test "TxReset from Idle is a no-op" <|
+            \_ ->
+                Tx.update Tx.TxReset Tx.Idle
+                    |> Expect.equal Tx.Idle
+        , test "TxReceiptNotFound is always a no-op" <|
+            \_ ->
+                Tx.update (Tx.TxReceiptNotFound "my-id") inSubmittedState
+                    |> Expect.equal inSubmittedState
         ]
 
 
@@ -194,7 +248,7 @@ terminalPendingTests =
                         Expect.fail "Invalid hash"
         , test "Confirmed is terminal" <|
             \_ ->
-                Tx.update (Tx.TxConfirmed emptyReceipt) Tx.Idle
+                Tx.update (Tx.TxConfirmed emptyReceipt) inConfirmingState
                     |> Tx.isTerminal
                     |> Expect.equal True
         , test "Failed is terminal" <|
@@ -216,7 +270,7 @@ terminalPendingTests =
                         Expect.fail "Invalid hash"
         , test "Confirming is pending" <|
             \_ ->
-                Tx.update (Tx.TxConfirmation validHash 1) Tx.Idle
+                inConfirmingState
                     |> Tx.isPending
                     |> Expect.equal True
         , test "Idle is not pending" <|
@@ -224,7 +278,7 @@ terminalPendingTests =
                 Tx.isPending Tx.Idle |> Expect.equal False
         , test "Confirmed is not pending" <|
             \_ ->
-                Tx.update (Tx.TxConfirmed emptyReceipt) Tx.Idle
+                Tx.update (Tx.TxConfirmed emptyReceipt) inConfirmingState
                     |> Tx.isPending
                     |> Expect.equal False
         ]
@@ -313,6 +367,11 @@ decoderTests =
                                 Ok _ ->
                                     Expect.fail "Expected failure"
                        )
+        , test "decodes receiptNotFound as TxReceiptNotFound with id" <|
+            \_ ->
+                """{"tag":"receiptNotFound","id":"poll-1"}"""
+                    |> D.decodeString Tx.decoder
+                    |> Expect.equal (Ok (Tx.TxReceiptNotFound "poll-1"))
         ]
 
 
@@ -321,7 +380,7 @@ parseReceiptEventsTests =
     describe "parseReceiptEvents"
         [ test "returns empty list for empty logs" <|
             \_ ->
-                case Tx.update (Tx.TxConfirmed emptyReceipt) Tx.Idle of
+                case Tx.update (Tx.TxConfirmed emptyReceipt) inConfirmingState of
                     Tx.Confirmed r ->
                         Tx.parseReceiptEvents [] r |> Expect.equal []
 
@@ -345,7 +404,7 @@ parseReceiptEventsTests =
                     alwaysData log =
                         Just log.data
                 in
-                case Tx.update (Tx.TxConfirmed receiptWithLog) Tx.Idle of
+                case Tx.update (Tx.TxConfirmed receiptWithLog) inConfirmingState of
                     Tx.Confirmed r ->
                         Tx.parseReceiptEvents [ alwaysData ] r
                             |> Expect.equal [ "0x1234" ]
@@ -370,7 +429,7 @@ parseReceiptEventsTests =
                     neverDecoder _ =
                         Nothing
                 in
-                case Tx.update (Tx.TxConfirmed receiptWithLog) Tx.Idle of
+                case Tx.update (Tx.TxConfirmed receiptWithLog) inConfirmingState of
                     Tx.Confirmed r ->
                         Tx.parseReceiptEvents [ neverDecoder ] r
                             |> Expect.equal []
@@ -398,11 +457,44 @@ parseReceiptEventsTests =
                     decodeIndex log =
                         Just (String.fromInt log.logIndex)
                 in
-                case Tx.update (Tx.TxConfirmed receiptWithLog) Tx.Idle of
+                case Tx.update (Tx.TxConfirmed receiptWithLog) inConfirmingState of
                     Tx.Confirmed r ->
                         Tx.parseReceiptEvents [ decodeData, decodeIndex ] r
                             |> List.length
                             |> Expect.equal 2
+
+                    _ ->
+                        Expect.fail "Expected Confirmed"
+        ]
+
+
+confirmationsTests : Test
+confirmationsTests =
+    describe "transactionConfirmations"
+        [ test "currentBlock > receipt.blockNumber returns positive count" <|
+            \_ ->
+                case Tx.update (Tx.TxConfirmed emptyReceipt) inConfirmingState of
+                    Tx.Confirmed receipt ->
+                        Tx.transactionConfirmations 110 receipt
+                            |> Expect.equal 10
+
+                    _ ->
+                        Expect.fail "Expected Confirmed"
+        , test "currentBlock == receipt.blockNumber returns 0" <|
+            \_ ->
+                case Tx.update (Tx.TxConfirmed emptyReceipt) inConfirmingState of
+                    Tx.Confirmed receipt ->
+                        Tx.transactionConfirmations 100 receipt
+                            |> Expect.equal 0
+
+                    _ ->
+                        Expect.fail "Expected Confirmed"
+        , test "currentBlock < receipt.blockNumber clamps to 0" <|
+            \_ ->
+                case Tx.update (Tx.TxConfirmed emptyReceipt) inConfirmingState of
+                    Tx.Confirmed receipt ->
+                        Tx.transactionConfirmations 90 receipt
+                            |> Expect.equal 0
 
                     _ ->
                         Expect.fail "Expected Confirmed"

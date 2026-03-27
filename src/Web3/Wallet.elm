@@ -3,12 +3,19 @@ module Web3.Wallet exposing
     , Msg(..)
     , WalletCmd(..)
     , WalletProvider
+    , ChainConfig
     , update
+    , startConnect
     , connect
     , disconnect
     , switchChain
     , selectWallet
+    , addChain
+    , watchAsset
+    , requestPermissions
+    , getPermissions
     , isConnected
+    , isReadOnly
     , getAddress
     , getChainId
     , encode
@@ -19,21 +26,43 @@ module Web3.Wallet exposing
 
 The wallet is modeled as an explicit state — you can't accidentally
 call a contract without a connected wallet because the compiler
-won't give you an Address from a Disconnected state.
+won't give you an `Address` from a `Disconnected` state.
 
     case model.wallet of
         Connected info ->
-            -- info.address is available here
+            -- info.address : T.Address — only available here
             buy info.address amount
 
+        WrongChain _ _ ->
+            -- wallet is connected but on the wrong chain
+            button [ onClick SwitchChain ] [ text "Switch chain" ]
+
+        ReadOnly ->
+            -- rpcUrl configured but no wallet; reads work, writes will fail
+            viewReadOnlyBanner
+
         _ ->
-            -- can't buy, no address to use
             showConnectButton
 
-@docs State, Msg, WalletCmd, WalletProvider
-@docs update
-@docs connect, disconnect, switchChain, selectWallet
-@docs isConnected, getAddress, getChainId
+**EIP-6963 multi-wallet discovery** — listen for `WalletsDiscovered` on the
+port and present the list to the user; call `selectWallet rdns` when they pick.
+
+**Typical connection flow:**
+
+1. User clicks "Connect" → call `startConnect` on state, send `connect` via port.
+2. `WalletsDiscovered providers` arrives → show picker if `providers` is non-empty.
+3. User picks a wallet → send `selectWallet rdns` via port.
+4. `WalletConnected addr chainId` arrives → `update` transitions to `Connected` or `WrongChain`.
+5. If `WrongChain` → send `switchChain expectedChain` via port.
+
+For native balance queries, use `Web3.Balance`. For adding chains, use `addChain` with
+a `ChainConfig` record and follow up with `switchChain`.
+
+@docs State, Msg, WalletCmd, WalletProvider, ChainConfig
+@docs update, startConnect
+@docs connect, disconnect, switchChain, selectWallet, addChain
+@docs watchAsset, requestPermissions, getPermissions
+@docs isConnected, isReadOnly, getAddress, getChainId
 @docs encode, decoder
 
 -}
@@ -44,9 +73,18 @@ import Web3.Types as T
 
 
 {-| Wallet connection state. Every possible state is explicit.
+
+  - `Disconnected` — no wallet detected, no rpcUrl configured
+  - `ReadOnly` — rpcUrl is present but no wallet; reads work, writes will fail
+  - `Connecting` — wallet connection in progress
+  - `Connected` — wallet connected on the expected chain
+  - `WrongChain` — wallet connected but on the wrong chain
+  - `Error` — unrecoverable error
+
 -}
 type State
     = Disconnected
+    | ReadOnly
     | Connecting
     | Connected ConnectedInfo
     | WrongChain ConnectedInfo T.ChainId
@@ -68,6 +106,17 @@ type alias WalletProvider =
     }
 
 
+{-| Configuration for adding a new chain to the wallet (EIP-3085).
+-}
+type alias ChainConfig =
+    { chainId : Int
+    , chainName : String
+    , rpcUrls : List String
+    , nativeCurrency : { name : String, symbol : String, decimals : Int }
+    , blockExplorerUrls : List String
+    }
+
+
 {-| Messages from the JS wallet port.
 -}
 type Msg
@@ -77,6 +126,11 @@ type Msg
     | AccountChanged String
     | WalletError String
     | WalletsDiscovered (List WalletProvider)
+    | ReadOnlyMode
+    | ChainAdded
+    | SwitchChainOk Int
+    | AssetWatched
+    | GotPermissions (List String)
 
 
 {-| Commands to send to JS via port.
@@ -86,6 +140,10 @@ type WalletCmd
     | RequestDisconnect
     | RequestSwitchChain Int
     | RequestSelectWallet String
+    | RequestAddChain ChainConfig
+    | RequestWatchAsset { address : T.Address, symbol : String, decimals : Int, image : String }
+    | RequestPermissions
+    | GetPermissions
 
 
 {-| Update wallet state from a port message.
@@ -110,10 +168,22 @@ update expectedChain msg state =
                     Error ("Invalid address: " ++ addr)
 
         WalletDisconnected ->
-            Disconnected
+            case state of
+                ReadOnly ->
+                    ReadOnly
+
+                Error _ ->
+                    -- explicit recovery: Error state exits via disconnect
+                    Disconnected
+
+                _ ->
+                    Disconnected
 
         ChainChanged chain ->
             case state of
+                ReadOnly ->
+                    ReadOnly
+
                 Connected info ->
                     let
                         newInfo =
@@ -129,20 +199,82 @@ update expectedChain msg state =
                     state
 
         AccountChanged addr ->
-            case ( state, T.address addr ) of
-                ( Connected info, Just a ) ->
-                    Connected { info | address = a }
+            case state of
+                ReadOnly ->
+                    ReadOnly
 
-                ( WrongChain info chain, Just a ) ->
-                    WrongChain { info | address = a } chain
+                _ ->
+                    case ( state, T.address addr ) of
+                        ( Connected info, Just a ) ->
+                            Connected { info | address = a }
+
+                        ( WrongChain info chain, Just a ) ->
+                            WrongChain { info | address = a } chain
+
+                        _ ->
+                            state
+
+        WalletError err ->
+            case state of
+                ReadOnly ->
+                    ReadOnly
+
+                _ ->
+                    Error err
+
+        WalletsDiscovered _ ->
+            state
+
+        ReadOnlyMode ->
+            ReadOnly
+
+        ChainAdded ->
+            -- The chain has been added to the wallet but the active chain has not changed.
+            -- Send `switchChain` next to activate it.
+            state
+
+        SwitchChainOk chain ->
+            case state of
+                WrongChain info _ ->
+                    if chain == T.chainIdToInt expectedChain then
+                        Connected info
+
+                    else
+                        -- Switched but landed on yet another wrong chain
+                        WrongChain info expectedChain
 
                 _ ->
                     state
 
-        WalletError err ->
-            Error err
+        AssetWatched ->
+            state
 
-        WalletsDiscovered _ ->
+        GotPermissions _ ->
+            state
+
+
+{-| Transition to `Connecting` state before sending the `connect` port command.
+
+Call this when the user clicks the connect button, then send `connect` via the port:
+
+    ( { model | wallet = Wallet.startConnect model.wallet }
+    , web3Cmd (Wallet.encode Wallet.connect)
+    )
+
+Valid transitions: `Disconnected → Connecting`, `Error _ → Connecting`.
+All other states are unchanged (connecting while already connected is a no-op).
+
+-}
+startConnect : State -> State
+startConnect state =
+    case state of
+        Disconnected ->
+            Connecting
+
+        Error _ ->
+            Connecting
+
+        _ ->
             state
 
 
@@ -177,12 +309,61 @@ selectWallet rdns =
     RequestSelectWallet rdns
 
 
+{-| Request wallet_addEthereumChain (EIP-3085) to add a new network.
+
+    addChain
+        { chainId = 369
+        , chainName = "PulseChain"
+        , rpcUrls = [ "https://rpc.pulsechain.com" ]
+        , nativeCurrency = { name = "Pulse", symbol = "PLS", decimals = 18 }
+        , blockExplorerUrls = [ "https://scan.pulsechain.com" ]
+        }
+
+-}
+addChain : ChainConfig -> WalletCmd
+addChain config =
+    RequestAddChain config
+
+
+{-| Command to add a token to the wallet UI (EIP-747).
+-}
+watchAsset : { address : T.Address, symbol : String, decimals : Int, image : String } -> WalletCmd
+watchAsset opts =
+    RequestWatchAsset opts
+
+
+{-| Command to request wallet permissions (EIP-2255).
+-}
+requestPermissions : WalletCmd
+requestPermissions =
+    RequestPermissions
+
+
+{-| Command to get current wallet permissions (EIP-2255).
+-}
+getPermissions : WalletCmd
+getPermissions =
+    GetPermissions
+
+
 {-| True if the wallet is in the Connected state.
 -}
 isConnected : State -> Bool
 isConnected state =
     case state of
         Connected _ ->
+            True
+
+        _ ->
+            False
+
+
+{-| True if in ReadOnly mode (rpcUrl present, no wallet). Reads work; writes will fail.
+-}
+isReadOnly : State -> Bool
+isReadOnly state =
+    case state of
+        ReadOnly ->
             True
 
         _ ->
@@ -240,6 +421,37 @@ encode cmd =
                 , ( "rdns", E.string rdns )
                 ]
 
+        RequestAddChain config ->
+            E.object
+                [ ( "tag", E.string "addChain" )
+                , ( "chainId", E.int config.chainId )
+                , ( "chainName", E.string config.chainName )
+                , ( "rpcUrls", E.list E.string config.rpcUrls )
+                , ( "nativeCurrency"
+                  , E.object
+                        [ ( "name", E.string config.nativeCurrency.name )
+                        , ( "symbol", E.string config.nativeCurrency.symbol )
+                        , ( "decimals", E.int config.nativeCurrency.decimals )
+                        ]
+                  )
+                , ( "blockExplorerUrls", E.list E.string config.blockExplorerUrls )
+                ]
+
+        RequestWatchAsset opts ->
+            E.object
+                [ ( "tag", E.string "watchAsset" )
+                , ( "address", E.string (T.addressToString opts.address) )
+                , ( "symbol", E.string opts.symbol )
+                , ( "decimals", E.int opts.decimals )
+                , ( "image", E.string opts.image )
+                ]
+
+        RequestPermissions ->
+            E.object [ ( "tag", E.string "requestPermissions" ) ]
+
+        GetPermissions ->
+            E.object [ ( "tag", E.string "getPermissions" ) ]
+
 
 {-| Decode a Msg from the JS wallet port.
 -}
@@ -263,9 +475,6 @@ decoder =
                     "accountChanged" ->
                         D.map AccountChanged (D.field "address" D.string)
 
-                    "error" ->
-                        D.map WalletError (D.field "message" D.string)
-
                     "failed" ->
                         D.map WalletError (D.field "error" D.string)
 
@@ -281,6 +490,22 @@ decoder =
                                 )
                             )
 
+                    "readOnly" ->
+                        D.succeed ReadOnlyMode
+
+                    "chainAdded" ->
+                        D.succeed ChainAdded
+
+                    "switchChainOk" ->
+                        D.map SwitchChainOk (D.field "chainId" D.int)
+
+                    "assetWatched" ->
+                        D.succeed AssetWatched
+
+                    "permissions" ->
+                        D.map GotPermissions (D.field "permissions" (D.list D.string))
+
                     _ ->
                         D.fail ("Unknown wallet message: " ++ tag)
             )
+

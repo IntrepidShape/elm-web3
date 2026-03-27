@@ -2,11 +2,14 @@ module Web3.BigInt exposing
     ( BigInt
     , fromInt
     , fromString
+    , fromIntString
+    , fromHexString
     , toString
     , add
     , sub
     , mul
     , div
+    , mod
     , compare
     , gt
     , gte
@@ -15,6 +18,7 @@ module Web3.BigInt exposing
     , eq
     , zero
     , isZero
+    , decoder
     )
 
 {-| Arbitrary-precision integers for EVM applications.
@@ -26,15 +30,17 @@ All values crossing the port boundary are decimal strings — this module
 handles the conversion safely.
 
 @docs BigInt
-@docs fromInt, fromString, toString
-@docs add, sub, mul, div
+@docs fromInt, fromString, fromIntString, fromHexString, toString
+@docs add, sub, mul, div, mod
 @docs compare, eq, lt, lte, gt, gte
 @docs zero, isZero
+@docs decoder
 
 -}
 
 import Basics
 import Char
+import Json.Decode as D
 import List
 import String
 
@@ -137,6 +143,69 @@ fromString s =
 
         _ ->
             parseUnsigned s
+
+
+{-| Alias for fromString (decimal). Kept for API symmetry with fromHexString.
+-}
+fromIntString : String -> Maybe BigInt
+fromIntString =
+    fromString
+
+
+{-| Parse a 0x-prefixed hexadecimal string as a non-negative BigInt.
+Returns Nothing for invalid input or empty hex body.
+
+    fromHexString "0x64"  == Just (fromInt 100)
+    fromHexString "0xFF"  == Just (fromInt 255)
+    fromHexString "0x"    == Nothing
+    fromHexString "0xgg"  == Nothing
+
+-}
+fromHexString : String -> Maybe BigInt
+fromHexString s =
+    let
+        raw =
+            if String.startsWith "0x" s || String.startsWith "0X" s then
+                String.dropLeft 2 s
+
+            else
+                s
+    in
+    if String.isEmpty raw then
+        Nothing
+
+    else
+        String.foldl
+            (\c acc ->
+                case acc of
+                    Nothing ->
+                        Nothing
+
+                    Just n ->
+                        let
+                            d =
+                                hexDigitValue c
+                        in
+                        if d < 0 then
+                            Nothing
+
+                        else
+                            Just (add (mul n (fromInt 16)) (fromInt d))
+            )
+            (Just zero)
+            (String.toLower raw)
+
+
+hexDigitValue : Char -> Int
+hexDigitValue c =
+    if c >= '0' && c <= '9' then
+        Char.toCode c - Char.toCode '0'
+
+    else if c >= 'a' && c <= 'f' then
+        Char.toCode c - Char.toCode 'a' + 10
+
+    else
+        -1
 
 
 parseUnsigned : String -> Maybe BigInt
@@ -322,6 +391,23 @@ div (BigInt sa a) (BigInt sb b) =
 
             q ->
                 Just (BigInt (combineSigns sa sb) q)
+
+
+
+{-| Remainder: a `mod` b. Returns Nothing if b is zero.
+
+    mod (fromInt 10) (fromInt 3) == Just (fromInt 1)
+    mod (fromInt 10) zero        == Nothing
+
+-}
+mod : BigInt -> BigInt -> Maybe BigInt
+mod a b =
+    case div a b of
+        Nothing ->
+            Nothing
+
+        Just q ->
+            Just (sub a (mul q b))
 
 
 
@@ -639,7 +725,7 @@ natDivMod a b =
 natDivModStep : List Int -> List Int -> Int -> List Int -> ( List Int, List Int )
 natDivModStep remainder b shift qAcc =
     if shift < 0 then
-        ( natNormalize (List.reverse qAcc), natNormalize remainder )
+        ( natNormalize qAcc, natNormalize remainder )
 
     else
         let
@@ -673,3 +759,22 @@ findQd remainder bShifted lo hi =
 
             _ ->
                 findQd remainder bShifted mid hi
+
+
+{-| Decode a BigInt from a JSON decimal string.
+
+    D.decodeString BigInt.decoder "\"12345\"" == Ok (BigInt.fromInt 12345)
+
+-}
+decoder : D.Decoder BigInt
+decoder =
+    D.string
+        |> D.andThen
+            (\s ->
+                case fromString s of
+                    Just n ->
+                        D.succeed n
+
+                    Nothing ->
+                        D.fail ("Invalid BigInt: " ++ s)
+            )

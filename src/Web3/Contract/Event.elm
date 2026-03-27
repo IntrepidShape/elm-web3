@@ -45,6 +45,8 @@ type alias EventFilter =
 -}
 type alias EventLog a =
     { data : a
+    , contract : T.Address
+    , topics : List String
     , blockNumber : Int
     , txHash : T.TxHash
     , logIndex : Int
@@ -70,12 +72,42 @@ encode =
     watchEvent
 
 
-{-| Decode an event log with a custom data decoder.
+{-| Decode a `watchEvent` log from the JS port.
+
+Requires the message to have `tag: "eventLog"` — use `logsDecoder` for
+the batch `getLogs` response which wraps logs in an array.
+
 -}
 decoder : D.Decoder a -> D.Decoder (EventLog a)
 decoder dataDecoder =
-    D.map4 EventLog
+    D.field "tag" D.string
+        |> D.andThen
+            (\tag ->
+                case tag of
+                    "eventLog" ->
+                        logDecoder dataDecoder
+
+                    _ ->
+                        D.fail ("Expected 'eventLog' tag, got: " ++ tag)
+            )
+
+
+logDecoder : D.Decoder a -> D.Decoder (EventLog a)
+logDecoder dataDecoder =
+    D.map6 EventLog
         (D.field "data" dataDecoder)
+        (D.field "contract" D.string
+            |> D.andThen
+                (\s ->
+                    case T.address s of
+                        Just addr ->
+                            D.succeed addr
+
+                        Nothing ->
+                            D.fail ("Invalid contract address: " ++ s)
+                )
+        )
+        (D.field "topics" (D.list D.string))
         (D.field "blockNumber" D.int)
         (D.field "txHash" D.string
             |> D.andThen
@@ -108,32 +140,17 @@ getLogs query =
     E.object
         [ ( "tag", E.string "getLogs" )
         , ( "contract", E.string (T.addressToString query.contract) )
-        , ( "fromBlock", encodeBlockNumber query.fromBlock )
-        , ( "toBlock", encodeBlockNumber query.toBlock )
+        , ( "fromBlock", T.encodeBlockNumber query.fromBlock )
+        , ( "toBlock", T.encodeBlockNumber query.toBlock )
         , ( "topics", E.list (Maybe.map E.string >> Maybe.withDefault E.null) query.topics )
         ]
 
 
-{-| Encode a BlockNumber for JSON-RPC.
--}
-encodeBlockNumber : T.BlockNumber -> E.Value
-encodeBlockNumber bn =
-    case bn of
-        T.BlockNum n ->
-            E.int n
-
-        T.Latest ->
-            E.string "latest"
-
-        T.Earliest ->
-            E.string "earliest"
-
-        T.Pending ->
-            E.string "pending"
-
-
 {-| Decode a list of event logs with a custom data decoder.
+
+Decodes the `{ tag: "logs", logs: [...] }` response from `getLogs`.
+
 -}
 logsDecoder : D.Decoder a -> D.Decoder (List (EventLog a))
 logsDecoder dataDecoder =
-    D.field "logs" (D.list (decoder dataDecoder))
+    D.field "logs" (D.list (logDecoder dataDecoder))

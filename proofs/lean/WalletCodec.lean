@@ -29,6 +29,7 @@ inductive WalletCmd where
   | RequestDisconnect   : WalletCmd
   | RequestSwitchChain  : Int → WalletCmd
   | RequestSelectWallet : String → WalletCmd
+  | RequestBalance      : String → WalletCmd  -- address string
   deriving Repr, BEq, DecidableEq
 
 -- ============================================================================
@@ -44,6 +45,8 @@ def encodeWalletCmd : WalletCmd → JsonValue
       JsonValue.object [("tag", JsonValue.str "switchChain"), ("chainId", JsonValue.int chain)]
   | .RequestSelectWallet rdns =>
       JsonValue.object [("tag", JsonValue.str "selectWallet"), ("rdns", JsonValue.str rdns)]
+  | .RequestBalance addr =>
+      JsonValue.object [("tag", JsonValue.str "getBalance"), ("address", JsonValue.str addr)]
 
 -- ============================================================================
 -- 4. Helper: Field Lookup
@@ -79,6 +82,10 @@ def decodeWalletCmd (j : JsonValue) : Option WalletCmd :=
           match lookupField "rdns" fields >>= asString with
           | some s => some (.RequestSelectWallet s)
           | none   => none
+      | some "getBalance" =>
+          match lookupField "address" fields >>= asString with
+          | some s => some (.RequestBalance s)
+          | none   => none
       | _ => none
   | _ => none
 
@@ -105,6 +112,8 @@ theorem decode_encode_roundtrip (cmd : WalletCmd) :
   | RequestSwitchChain n =>
       simp [encodeWalletCmd, decodeWalletCmd, lookupField, asString, asInt, Bind.bind, Option.bind]
   | RequestSelectWallet s =>
+      simp [encodeWalletCmd, decodeWalletCmd, lookupField, asString, Bind.bind, Option.bind]
+  | RequestBalance s =>
       simp [encodeWalletCmd, decodeWalletCmd, lookupField, asString, Bind.bind, Option.bind]
 
 -- ============================================================================
@@ -148,6 +157,7 @@ def walletCmdTag : WalletCmd → String
   | .RequestDisconnect   => "disconnect"
   | .RequestSwitchChain _  => "switchChain"
   | .RequestSelectWallet _ => "selectWallet"
+  | .RequestBalance _       => "getBalance"
 
 theorem tag_injective_across_families (c₁ c₂ : WalletCmd)
     (h : walletCmdTag c₁ = walletCmdTag c₂) :

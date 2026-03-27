@@ -16,7 +16,7 @@ Properties verified:
 
 -}
 
-import BigInt
+import Web3.BigInt as BigInt
 import Expect
 import Fuzz exposing (Fuzzer)
 import Test exposing (..)

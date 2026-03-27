@@ -94,6 +94,8 @@ msgFuzzer =
         , Fuzz.map Tx.TxConfirmed receiptJsonFuzzer
         , Fuzz.map Tx.TxFailed Fuzz.string
         , Fuzz.constant Tx.TxRejected
+        , Fuzz.constant Tx.TxReset
+        , Fuzz.map Tx.TxReceiptNotFound Fuzz.string
         ]
 
 
@@ -107,10 +109,13 @@ nonSubmittedMsgFuzzer =
         , Fuzz.map Tx.TxConfirmed receiptJsonFuzzer
         , Fuzz.map Tx.TxFailed Fuzz.string
         , Fuzz.constant Tx.TxRejected
+        , Fuzz.constant Tx.TxReset
+        , Fuzz.map Tx.TxReceiptNotFound Fuzz.string
         ]
 
 
 {-| Generate initial states, including those only reachable via update.
+Uses the correct state machine transitions (AwaitingSignature as entry point).
 -}
 initialStateFuzzer : Fuzzer Tx.Status
 initialStateFuzzer =
@@ -118,22 +123,35 @@ initialStateFuzzer =
         [ Fuzz.constant Tx.Idle
         , Fuzz.constant Tx.AwaitingSignature
         , Fuzz.constant Tx.Rejected
-        , -- Failed (reached via TxFailed)
+        , -- Failed (reached via TxFailed from AwaitingSignature)
           Fuzz.map
-            (\err -> Tx.update (Tx.TxFailed err) Tx.Idle)
+            (\err -> Tx.update (Tx.TxFailed err) Tx.AwaitingSignature)
             Fuzz.string
-        , -- Submitted (reached via TxSubmitted with valid hash)
+        , -- Submitted (reached via AwaitingSignature → TxSubmitted)
           Fuzz.map
-            (\hash -> Tx.update (Tx.TxSubmitted hash) Tx.Idle)
+            (\hash -> Tx.update (Tx.TxSubmitted hash) Tx.AwaitingSignature)
             validTxHashStringFuzzer
-        , -- Confirming (reached via TxConfirmation with valid hash)
+        , -- Confirming (reached via AwaitingSignature → Submitted → TxConfirmation)
           Fuzz.map2
-            (\hash count -> Tx.update (Tx.TxConfirmation hash count) Tx.Idle)
+            (\hash count ->
+                let
+                    submitted =
+                        Tx.update (Tx.TxSubmitted hash) Tx.AwaitingSignature
+                in
+                Tx.update (Tx.TxConfirmation hash count) submitted
+            )
             validTxHashStringFuzzer
             (Fuzz.intRange 1 100)
-        , -- Confirmed (reached via TxConfirmed with valid hash)
+        , -- Confirmed (reached via full chain)
           Fuzz.map
             (\hash ->
+                let
+                    submitted =
+                        Tx.update (Tx.TxSubmitted hash) Tx.AwaitingSignature
+
+                    confirming =
+                        Tx.update (Tx.TxConfirmation hash 1) submitted
+                in
                 Tx.update
                     (Tx.TxConfirmed
                         { txHash = hash
@@ -143,7 +161,7 @@ initialStateFuzzer =
                         , logs = []
                         }
                     )
-                    Tx.Idle
+                    confirming
             )
             validTxHashStringFuzzer
         ]
@@ -208,6 +226,7 @@ suite =
         , isPendingConsistencyTest
         , txRejectedAlwaysRejectsTest
         , txFailedAlwaysFailsTest
+        , txResetFromTerminalTest
         ]
 
 
@@ -330,25 +349,33 @@ terminalAndPendingMutuallyExclusiveTest =
                 Expect.pass
 
 
-{-| Submitted state is only reachable via TxSubmitted. Applying any other
-msg type to any state must never produce Submitted.
+{-| Submitted state is only *created* by TxSubmitted. A non-TxSubmitted msg
+applied to a non-Submitted state must never yield Submitted.
+(If initState is already Submitted, a no-op msg may legitimately leave it Submitted.)
 -}
 submittedOnlyViaTxSubmittedTest : Test
 submittedOnlyViaTxSubmittedTest =
-    fuzz2 initialStateFuzzer nonSubmittedMsgFuzzer "non-TxSubmitted msgs never produce Submitted state" <|
+    fuzz2 initialStateFuzzer nonSubmittedMsgFuzzer "non-TxSubmitted msgs never produce Submitted state from non-Submitted init" <|
         \initState msg ->
-            let
-                newState =
-                    Tx.update msg initState
-            in
-            if isSubmittedState newState then
-                Expect.fail
-                    ("Expected non-Submitted result after non-TxSubmitted msg, got: "
-                        ++ statusTag newState
-                    )
+            if isSubmittedState initState then
+                -- already Submitted — no-op msgs may keep it there; skip
+                Expect.pass
 
             else
-                Expect.pass
+                let
+                    newState =
+                        Tx.update msg initState
+                in
+                if isSubmittedState newState then
+                    Expect.fail
+                        ("Expected non-Submitted result after non-TxSubmitted msg from "
+                            ++ statusTag initState
+                            ++ ", got: "
+                            ++ statusTag newState
+                        )
+
+                else
+                    Expect.pass
 
 
 {-| isPending is exactly True for AwaitingSignature, Submitted, and Confirming,
@@ -380,12 +407,16 @@ isPendingConsistencyTest =
                 |> Expect.equal expectedPending
 
 
-{-| TxRejected always transitions to Rejected regardless of how many prior
-messages have been applied.
+{-| TxRejected semantics:
+- AwaitingSignature → Rejected (user declined before signing)
+- Submitted → Failed (post-submission rejection is a chain-level failure)
+- Confirming → Failed (same)
+- Terminal states → unchanged (guarded)
+- Idle → unchanged (no-op)
 -}
 txRejectedAlwaysRejectsTest : Test
 txRejectedAlwaysRejectsTest =
-    fuzz2 initialStateFuzzer (Fuzz.list msgFuzzer) "TxRejected always leads to Rejected from any state" <|
+    fuzz2 initialStateFuzzer (Fuzz.list msgFuzzer) "TxRejected transitions correctly per state" <|
         \initState msgs ->
             let
                 anyState =
@@ -394,16 +425,43 @@ txRejectedAlwaysRejectsTest =
                 afterReject =
                     Tx.update Tx.TxRejected anyState
             in
-            afterReject
-                |> Expect.equal Tx.Rejected
+            case anyState of
+                Tx.AwaitingSignature ->
+                    afterReject |> Expect.equal Tx.Rejected
+
+                Tx.Submitted _ ->
+                    case afterReject of
+                        Tx.Failed _ ->
+                            Expect.pass
+
+                        _ ->
+                            Expect.fail
+                                ("Expected Failed after TxRejected from Submitted, got: "
+                                    ++ statusTag afterReject
+                                )
+
+                Tx.Confirming _ _ ->
+                    case afterReject of
+                        Tx.Failed _ ->
+                            Expect.pass
+
+                        _ ->
+                            Expect.fail
+                                ("Expected Failed after TxRejected from Confirming, got: "
+                                    ++ statusTag afterReject
+                                )
+
+                _ ->
+                    -- Terminal states (guarded) and Idle stay the same
+                    afterReject |> Expect.equal anyState
 
 
-{-| TxFailed always transitions to Failed regardless of how many prior
-messages have been applied.
+{-| TxFailed transitions to Failed from any non-terminal state.
+Terminal states are unaffected (stay terminal).
 -}
 txFailedAlwaysFailsTest : Test
 txFailedAlwaysFailsTest =
-    fuzz3 initialStateFuzzer (Fuzz.list msgFuzzer) Fuzz.string "TxFailed always leads to Failed from any state" <|
+    fuzz3 initialStateFuzzer (Fuzz.list msgFuzzer) Fuzz.string "TxFailed leads to Failed from non-terminal states" <|
         \initState msgs errMsg ->
             let
                 anyState =
@@ -412,12 +470,40 @@ txFailedAlwaysFailsTest =
                 afterFail =
                     Tx.update (Tx.TxFailed errMsg) anyState
             in
-            case afterFail of
-                Tx.Failed _ ->
-                    Expect.pass
+            if Tx.isTerminal anyState then
+                -- Terminal states are guarded — TxFailed has no effect
+                afterFail |> Expect.equal anyState
 
-                _ ->
-                    Expect.fail
-                        ("Expected Failed state after TxFailed, got: "
-                            ++ statusTag afterFail
-                        )
+            else
+                case afterFail of
+                    Tx.Failed _ ->
+                        Expect.pass
+
+                    _ ->
+                        Expect.fail
+                            ("Expected Failed state after TxFailed from "
+                                ++ statusTag anyState
+                                ++ ", got: "
+                                ++ statusTag afterFail
+                            )
+
+
+{-| TxReset from any terminal state always yields Idle.
+TxReset from any non-terminal state is a no-op.
+-}
+txResetFromTerminalTest : Test
+txResetFromTerminalTest =
+    fuzz2 initialStateFuzzer (Fuzz.list msgFuzzer) "TxReset from terminal → Idle; from non-terminal → no-op" <|
+        \initState msgs ->
+            let
+                anyState =
+                    applyMsgs msgs initState
+
+                afterReset =
+                    Tx.update Tx.TxReset anyState
+            in
+            if Tx.isTerminal anyState then
+                afterReset |> Expect.equal Tx.Idle
+
+            else
+                afterReset |> Expect.equal anyState

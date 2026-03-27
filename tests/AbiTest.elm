@@ -1,6 +1,6 @@
 module AbiTest exposing (suite)
 
-import BigInt
+import Web3.BigInt as BigInt
 import Expect
 import Json.Decode as D
 import Json.Encode as E
