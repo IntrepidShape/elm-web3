@@ -40,7 +40,7 @@ pulsechain =
     { chainId = T.chainId 369
     , name = "PulseChain"
     , rpcUrl = "https://rpc.pulsechain.com"
-    , blockExplorer = "https://scan.pulsechain.com"
+    , blockExplorer = "https://scan.mypinata.cloud/ipfs/bafybeienxyoyrhn5tswclvd3gdjy5mtkkwmu37aqtml6onbf7xnb3o22pe/#"
     , nativeCurrency = "PLS"
     }
 
