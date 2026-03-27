@@ -21,7 +21,9 @@ A package that lets Elm applications interact with EVM blockchains (Ethereum, Pu
 - **Event subscriptions and log queries** with typed decoders
 - **ABI code generator** that reads Solidity ABI JSON and outputs typed Elm modules
 
-The JS layer is ~500 lines with zero dependencies. No ethers. No viem. No web3.js. Just `window.ethereum.request()`.
+The JS layer is ~500 lines with zero npm dependencies. No ethers. No viem. No web3.js. Just `window.ethereum.request()`.
+
+The Elm layer depends only on the Elm standard library (`elm/core`, `elm/json`, `elm/http`, `elm/time`). No third-party Elm packages.
 
 ## Install
 
