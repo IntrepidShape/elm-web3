@@ -32,6 +32,10 @@ bugs.
         Failed err ->
             viewError err
 
+@docs Status, Msg, Receipt, EventLog
+@docs update, isTerminal, isPending
+@docs decoder, parseReceiptEvents
+
 -}
 
 import Json.Decode as D

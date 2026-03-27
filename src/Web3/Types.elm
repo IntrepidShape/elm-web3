@@ -20,6 +20,12 @@ module Web3.Types exposing
 All types are opaque — you can't accidentally pass a TxHash where an Address
 is expected. Construction validates format.
 
+@docs Address, TxHash, BlockNumber, ChainId, Wei, HexString
+@docs address, addressToString
+@docs txHash, txHashToString
+@docs chainId, chainIdToInt
+@docs hexString, hexStringToString
+
 -}
 
 import Web3.BigInt exposing (BigInt)
@@ -120,21 +126,29 @@ hexString str =
 -- ACCESSORS
 
 
+{-| Extract the string value of an Address.
+-}
 addressToString : Address -> String
 addressToString (Address s) =
     s
 
 
+{-| Extract the string value of a TxHash.
+-}
 txHashToString : TxHash -> String
 txHashToString (TxHash s) =
     s
 
 
+{-| Extract the integer value of a ChainId.
+-}
 chainIdToInt : ChainId -> Int
 chainIdToInt (ChainId n) =
     n
 
 
+{-| Extract the string value of a HexString.
+-}
 hexStringToString : HexString -> String
 hexStringToString (HexString s) =
     s

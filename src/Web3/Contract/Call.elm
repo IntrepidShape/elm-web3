@@ -21,6 +21,9 @@ The code generator creates typed wrappers around these primitives.
             , decoder = Decode.string
             }
 
+@docs ReadCall
+@docs readCall, withBlock, encode, responseDecoder
+
 -}
 
 import Json.Decode as D

@@ -21,6 +21,10 @@ module Web3.Contract.Event exposing
             |> Event.decoder transferDecoder
             |> onContractEvent TransferReceived
 
+@docs EventFilter, EventLog, GetLogsQuery
+@docs watchEvent, encode, decoder
+@docs getLogs, logsDecoder
+
 -}
 
 import Json.Decode as D

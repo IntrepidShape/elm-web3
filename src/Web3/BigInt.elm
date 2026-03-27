@@ -25,6 +25,12 @@ Implemented as a base-10^7 digit list with no external dependencies.
 All values crossing the port boundary are decimal strings — this module
 handles the conversion safely.
 
+@docs BigInt
+@docs fromInt, fromString, toString
+@docs add, sub, mul, div
+@docs compare, eq, lt, lte, gt, gte
+@docs zero, isZero
+
 -}
 
 import Basics

@@ -26,6 +26,9 @@ Wire this into your Elm app's Model/update/subscriptions.
             Web3Msg subMsg ->
                 { model | web3 = Web3.update subMsg model.web3 }
 
+@docs Model, Msg
+@docs init, update, subscriptions
+
 -}
 
 import Json.Decode as D
@@ -34,6 +37,8 @@ import Web3.Types as T
 import Web3.Wallet as Wallet
 
 
+{-| Combined wallet + transaction state.
+-}
 type alias Model =
     { wallet : Wallet.State
     , expectedChain : T.ChainId
@@ -41,11 +46,15 @@ type alias Model =
     }
 
 
+{-| Messages for wallet and transaction updates.
+-}
 type Msg
     = WalletMsg Wallet.Msg
     | TxMsg String Tx.Msg
 
 
+{-| Initialize with the expected chain ID.
+-}
 init : T.ChainId -> Model
 init chain =
     { wallet = Wallet.Disconnected
@@ -54,6 +63,8 @@ init chain =
     }
 
 
+{-| Update wallet and transaction state from a port message.
+-}
 update : Msg -> Model -> Model
 update msg model =
     case msg of

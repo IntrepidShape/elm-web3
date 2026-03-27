@@ -59,6 +59,9 @@ Build a typed data request, encode it for the JS port, decode the signature resp
     -- Receive via port:
     --   D.decodeValue Sign.signatureDecoder incoming
 
+@docs TypedData, Domain, TypeField
+@docs typedData, encode, signatureDecoder
+
 -}
 
 import Dict exposing (Dict)

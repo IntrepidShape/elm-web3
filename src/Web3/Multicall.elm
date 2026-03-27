@@ -27,6 +27,9 @@ read calls into one RPC round-trip.
     -- Outgoing port: web3Cmd (Multicall.encode req)
     -- Incoming port: match on { tag = "multicallResult" } and apply responseDecoder
 
+@docs CallSpec, callSpec, MulticallRequest, CallResult
+@docs batch, encode, responseDecoder
+
 -}
 
 import Json.Decode as D

@@ -19,9 +19,12 @@ module Web3.Contract.Send exposing
     buy minTokens value =
         payableCall { ..., value = value }
 
+@docs WriteCall
+@docs writeCall, payableCall, withGasLimit, encode, estimateGas
+
 -}
 
-import BigInt exposing (BigInt)
+import Web3.BigInt as BigInt exposing (BigInt)
 import Json.Encode as E
 import Web3.Types as T
 

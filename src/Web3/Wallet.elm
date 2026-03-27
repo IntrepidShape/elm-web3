@@ -30,6 +30,12 @@ won't give you an Address from a Disconnected state.
             -- can't buy, no address to use
             showConnectButton
 
+@docs State, Msg, WalletCmd, WalletProvider
+@docs update
+@docs connect, disconnect, switchChain, selectWallet
+@docs isConnected, getAddress, getChainId
+@docs encode, decoder
+
 -}
 
 import Json.Decode as D
@@ -171,6 +177,8 @@ selectWallet rdns =
     RequestSelectWallet rdns
 
 
+{-| True if the wallet is in the Connected state.
+-}
 isConnected : State -> Bool
 isConnected state =
     case state of
@@ -181,6 +189,8 @@ isConnected state =
             False
 
 
+{-| Extract the connected address, if any.
+-}
 getAddress : State -> Maybe T.Address
 getAddress state =
     case state of
@@ -191,6 +201,8 @@ getAddress state =
             Nothing
 
 
+{-| Extract the connected chain ID, if any.
+-}
 getChainId : State -> Maybe T.ChainId
 getChainId state =
     case state of
@@ -205,6 +217,8 @@ getChainId state =
 -- JSON ENCODING (for port communication)
 
 
+{-| Encode a WalletCmd for the JS port.
+-}
 encode : WalletCmd -> E.Value
 encode cmd =
     case cmd of
@@ -227,6 +241,8 @@ encode cmd =
                 ]
 
 
+{-| Decode a Msg from the JS wallet port.
+-}
 decoder : D.Decoder Msg
 decoder =
     D.field "tag" D.string

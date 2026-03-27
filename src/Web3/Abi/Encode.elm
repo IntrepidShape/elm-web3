@@ -10,6 +10,9 @@ module Web3.Abi.Encode exposing
 
 {-| Helpers to encode contract call parameters to JSON values
 for passing through ports to the JS Web3 layer.
+
+@docs address, uint256, int256, bool, string, bytes, bytes32
+
 -}
 
 import Web3.BigInt as BigInt exposing (BigInt)

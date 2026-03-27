@@ -10,6 +10,10 @@ module Web3.Abi.Decode exposing
 
 {-| Helpers to decode contract return values from JSON
 received through ports from the JS Web3 layer.
+
+@docs address, uint256, int256, bool, string, bytes32
+@docs decodeRevertReason
+
 -}
 
 import Web3.BigInt as BigInt exposing (BigInt)
