@@ -552,6 +552,17 @@ See `proofs/COVERAGE.md` for the full coverage map. All proofs use only core Lea
 - `cmditch/elm-ethereum` — web3.js era, Task-based, no longer maintained
 - `purescript-web3` — similar concept in PureScript
 
+## Made by
+
+Built and maintained by [Intrepid Development](https://intrepiddev.com.au) — a
+Solidity studio in Perth, AU. We ship audit-ready smart contracts on Ethereum
+and PulseChain, and build full-stack systems around them when the engagement
+calls for it.
+
+If your team is using elm-web3 in production and wants help wiring it up, hardening
+the surrounding contracts, or auditing a deployment, reach out at
+[Jake@intrepiddev.com.au](mailto:Jake@intrepiddev.com.au).
+
 ## License
 
 MIT © Intrepid Development
