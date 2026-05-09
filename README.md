@@ -554,4 +554,4 @@ See `proofs/COVERAGE.md` for the full coverage map. All proofs use only core Lea
 
 ## License
 
-MIT © intrepidshape
+MIT © Intrepid Development
