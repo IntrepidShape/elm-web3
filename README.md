@@ -1,8 +1,8 @@
 # elm-web3
 
-EVM blockchain interaction for Elm applications.
+Type-safe EVM interaction for Elm. The runtime-exception guarantee extends past the wallet boundary.
 
-Provides typed wrappers around the browser wallet API (`window.ethereum`), a small JavaScript port bridge, and pure-Elm utilities for working with blockchain data. The goal is to make wallet connection, transaction submission, and contract interaction feel like ordinary Elm — pattern-matched state machines, opaque types, and explicit update functions rather than callbacks or effects hidden in subscriptions.
+Wraps `window.ethereum`, signs and sends transactions, decodes ABI, watches events — all behind explicit state machines and opaque types. Errors arrive as typed `Msg` values, not uncaught exceptions. No `any`, no stringly-typed addresses, no Promises swallowed at the boundary.
 
 ## Install
 
@@ -554,14 +554,11 @@ See `proofs/COVERAGE.md` for the full coverage map. All proofs use only core Lea
 
 ## Made by
 
-Built and maintained by [Intrepid Development](https://intrepiddev.com.au) — a
-Solidity studio in Perth, AU. We ship audit-ready smart contracts on Ethereum
-and PulseChain, and build full-stack systems around them when the engagement
-calls for it.
+[Intrepid Development](https://intrepiddev.com.au) — Solidity team. Dapps, contracts, audits.
 
-If your team is using elm-web3 in production and wants help wiring it up, hardening
-the surrounding contracts, or auditing a deployment, reach out at
-[Jake@intrepiddev.com.au](mailto:Jake@intrepiddev.com.au).
+We write the contracts and the frontends that talk to them. They deserve the same rigour. This lib is what we use on our own.
+
+If you want it wired into a production frontend, or the dapp side hardened alongside a contract engagement: [Jake@intrepiddev.com.au](mailto:Jake@intrepiddev.com.au).
 
 ## License
 
