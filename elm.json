@@ -3,7 +3,7 @@
     "name": "intrepidshape/elm-web3",
     "summary": "Type-safe EVM blockchain interaction for Elm. Zero runtime exceptions.",
     "license": "MIT",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "exposed-modules": [
         "Web3",
         "Web3.Types",
@@ -23,7 +23,8 @@
         "Web3.Sign",
         "Web3.Balance",
         "Web3.Query",
-        "Web3.Crypto"
+        "Web3.Crypto",
+        "Web3.Subscription"
     ],
     "elm-version": "0.19.0 <= v < 0.20.0",
     "dependencies": {

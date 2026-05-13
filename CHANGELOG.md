@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.1.0 — 2026-05-13
+
+### Added
+
+- `Web3.Subscription` — typed `eth_subscribe` / `eth_unsubscribe` flow with
+  port-Cmd helpers, decoder for inbound `LogEvent` messages, and a
+  `Status` lifecycle (`Open` / `Closed` / `Error`). Pair with the
+  `elm-web3-ports.ts` runtime for end-to-end type safety on event streams.
+- `js/elm-web3-ports.ts` — canonical, type-checked TypeScript source for
+  the JS runtime bridge. Consumers without a TS toolchain can use the
+  pre-built `js/elm-web3-ports.js` produced by `bun js/build.ts`.
+- `js/elm-web3-ports.d.ts` — public type declarations for the runtime
+  bridge.
+
+No breaking changes; this is a pure additive release.
+
+---
+
 ## 1.0.0 — 2026-05-09
 
 First publish of `intrepidshape/elm-web3` on the Elm package registry.
@@ -7,11 +25,11 @@ Published by [Intrepid Development](https://intrepiddev.com.au).
 
 The Elm registry tracks per-namespace versions, so this package starts at
 1.0.0 under the `intrepidshape` namespace. The internal evolution from
-1.0.0 → 2.0.x continued under earlier namespaces (`intrepidshape`,
-`bassradian`) and is preserved as historical CHANGELOG entries below for
-context. The 2.0.2 source content is what shipped here as 1.0.0.
+1.0.0 → 2.0.x continued under the earlier `bassradian` namespace and is
+preserved as historical CHANGELOG entries below for context. The 2.0.2
+source content is what shipped here as 1.0.0.
 
-The earlier namespaces are no longer maintained.
+The earlier namespace is no longer maintained.
 
 ---
 
