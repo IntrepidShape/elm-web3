@@ -1,6 +1,7 @@
 module Web3.Contract.Call exposing
     ( ReadCall
     , readCall
+    , readCallRaw
     , withBlock
     , withFrom
     , encode
@@ -49,7 +50,7 @@ Related modules: `Web3.Multicall` for batching multiple reads into one RPC call;
 `Web3.Contract.Send` for write calls.
 
 @docs ReadCall
-@docs readCall, withBlock, withFrom, encode, responseDecoder
+@docs readCall, readCallRaw, withBlock, withFrom, encode, responseDecoder
 
 -}
 
@@ -65,6 +66,7 @@ type ReadCall a
         { contract : T.Address
         , method : String
         , args : List E.Value
+        , data : Maybe String
         , decoder : D.Decoder a
         , block : T.BlockNumber
         , id : String
@@ -88,6 +90,45 @@ readCall opts =
         { contract = opts.contract
         , method = opts.method
         , args = opts.args
+        , data = Nothing
+        , decoder = opts.decoder
+        , block = T.Latest
+        , id = opts.id
+        , from = Nothing
+        }
+
+
+{-| Create a read call from **pre-built hex calldata** — the result of
+[`Web3.Abi.Calldata.calldata`](Web3-Abi-Calldata#calldata). The JS port
+bridge sends `data` directly without re-encoding, so the wire path is
+entirely pure-Elm: no method-name string, no arg encoding outside of Elm.
+
+    -- balanceOf(address) — selector baked at codegen time
+    balanceOf : T.Address -> T.Address -> ReadCall BigInt
+    balanceOf contract holder =
+        readCallRaw
+            { contract = contract
+            , data = Calldata.calldata "70a08231" [ Calldata.address holder ]
+            , decoder = AbiDecode.uint256
+            , id = "balanceOf"
+            }
+
+The `data` argument must be a complete `"0x…"` calldata string including the
+4-byte function selector.
+-}
+readCallRaw :
+    { contract : T.Address
+    , data : String
+    , decoder : D.Decoder a
+    , id : String
+    }
+    -> ReadCall a
+readCallRaw opts =
+    ReadCall
+        { contract = opts.contract
+        , method = ""
+        , args = []
+        , data = Just opts.data
         , decoder = opts.decoder
         , block = T.Latest
         , id = opts.id
@@ -120,22 +161,33 @@ withFrom addr (ReadCall call) =
 -}
 encode : ReadCall a -> E.Value
 encode (ReadCall call) =
-    E.object
-        ([ ( "tag", E.string "call" )
-         , ( "id", E.string call.id )
-         , ( "contract", E.string (T.addressToString call.contract) )
-         , ( "method", E.string call.method )
-         , ( "args", E.list identity call.args )
-         , ( "block", encodeBlock call.block )
-         ]
-            ++ (case call.from of
-                    Just addr ->
-                        [ ( "from", E.string (T.addressToString addr) ) ]
+    let
+        base =
+            [ ( "tag", E.string "call" )
+            , ( "id", E.string call.id )
+            , ( "contract", E.string (T.addressToString call.contract) )
+            , ( "block", encodeBlock call.block )
+            ]
 
-                    Nothing ->
-                        []
-               )
-        )
+        payload =
+            case call.data of
+                Just hex ->
+                    [ ( "data", E.string hex ) ]
+
+                Nothing ->
+                    [ ( "method", E.string call.method )
+                    , ( "args", E.list identity call.args )
+                    ]
+
+        from =
+            case call.from of
+                Just addr ->
+                    [ ( "from", E.string (T.addressToString addr) ) ]
+
+                Nothing ->
+                    []
+    in
+    E.object (base ++ payload ++ from)
 
 
 {-| Get the response decoder for a read call.

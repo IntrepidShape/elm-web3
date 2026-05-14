@@ -5,6 +5,7 @@ module Web3.BigInt exposing
     , fromIntString
     , fromHexString
     , toString
+    , toHexString
     , add
     , sub
     , mul
@@ -30,7 +31,7 @@ All values crossing the port boundary are decimal strings — this module
 handles the conversion safely.
 
 @docs BigInt
-@docs fromInt, fromString, fromIntString, fromHexString, toString
+@docs fromInt, fromString, fromIntString, fromHexString, toString, toHexString
 @docs add, sub, mul, div, mod
 @docs compare, eq, lt, lte, gt, gte
 @docs zero, isZero
@@ -285,6 +286,119 @@ padLeft n s =
 
     else
         String.repeat (n - len) "0" ++ s
+
+
+{-| Convert a non-negative `BigInt` to a lower-case hexadecimal string
+**without** a `"0x"` prefix or leading zeros.
+
+Returns `"0"` for zero. For negative integers, the sign is dropped and the
+absolute value is rendered — callers needing two's-complement should do the
+twiddling themselves (or use `Web3.Abi.Calldata.int256`).
+
+    toHexString (fromInt 0)     == "0"
+    toHexString (fromInt 255)   == "ff"
+    toHexString (fromInt 65535) == "ffff"
+
+-}
+toHexString : BigInt -> String
+toHexString b =
+    let
+        sixteen =
+            fromInt 16
+
+        loop : BigInt -> String -> String
+        loop rem acc =
+            if isZero rem then
+                if String.isEmpty acc then
+                    "0"
+
+                else
+                    acc
+
+            else
+                let
+                    digit =
+                        case mod rem sixteen of
+                            Just r ->
+                                r
+                                    |> toString
+                                    |> String.toInt
+                                    |> Maybe.withDefault 0
+
+                            Nothing ->
+                                0
+
+                    rest =
+                        case div rem sixteen of
+                            Just q ->
+                                q
+
+                            Nothing ->
+                                zero
+                in
+                loop rest (hexDigit digit ++ acc)
+    in
+    loop (abs_ b) ""
+
+
+abs_ : BigInt -> BigInt
+abs_ (BigInt _ digits) =
+    BigInt Pos digits
+
+
+hexDigit : Int -> String
+hexDigit n =
+    case n of
+        0 ->
+            "0"
+
+        1 ->
+            "1"
+
+        2 ->
+            "2"
+
+        3 ->
+            "3"
+
+        4 ->
+            "4"
+
+        5 ->
+            "5"
+
+        6 ->
+            "6"
+
+        7 ->
+            "7"
+
+        8 ->
+            "8"
+
+        9 ->
+            "9"
+
+        10 ->
+            "a"
+
+        11 ->
+            "b"
+
+        12 ->
+            "c"
+
+        13 ->
+            "d"
+
+        14 ->
+            "e"
+
+        15 ->
+            "f"
+
+        _ ->
+            "0"
 
 
 

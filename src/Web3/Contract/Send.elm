@@ -1,7 +1,9 @@
 module Web3.Contract.Send exposing
     ( WriteCall
     , writeCall
+    , writeCallRaw
     , payableCall
+    , payableCallRaw
     , withGasLimit
     , encode
     , estimateGas
@@ -33,7 +35,7 @@ Build a write call, encode it for the JS port, optionally estimate gas first.
             }
 
 @docs WriteCall
-@docs writeCall, payableCall, withGasLimit
+@docs writeCall, writeCallRaw, payableCall, payableCallRaw, withGasLimit
 @docs encode, estimateGas, deployCall, encodeRawSend
 
 -}
@@ -50,6 +52,7 @@ type WriteCall
         { contract : T.Address
         , method : String
         , args : List E.Value
+        , data : Maybe String
         , value : Maybe BigInt
         , gasLimit : Maybe Int
         }
@@ -68,6 +71,39 @@ writeCall opts =
         { contract = opts.contract
         , method = opts.method
         , args = opts.args
+        , data = Nothing
+        , value = Nothing
+        , gasLimit = Nothing
+        }
+
+
+{-| Create a write call from pre-built hex calldata — the result of
+[`Web3.Abi.Calldata.calldata`](Web3-Abi-Calldata#calldata). The JS port
+bridge sends `data` directly without re-encoding.
+
+    approve : T.Address -> T.Address -> BigInt -> WriteCall
+    approve contract spender amount =
+        writeCallRaw
+            { contract = contract
+            , data =
+                Calldata.calldata "095ea7b3"
+                    [ Calldata.address spender
+                    , Calldata.uint256 amount
+                    ]
+            }
+
+-}
+writeCallRaw :
+    { contract : T.Address
+    , data : String
+    }
+    -> WriteCall
+writeCallRaw opts =
+    WriteCall
+        { contract = opts.contract
+        , method = ""
+        , args = []
+        , data = Just opts.data
         , value = Nothing
         , gasLimit = Nothing
         }
@@ -87,6 +123,26 @@ payableCall opts =
         { contract = opts.contract
         , method = opts.method
         , args = opts.args
+        , data = Nothing
+        , value = Just opts.value
+        , gasLimit = Nothing
+        }
+
+
+{-| Create a payable write call from pre-built hex calldata + a value.
+-}
+payableCallRaw :
+    { contract : T.Address
+    , data : String
+    , value : BigInt
+    }
+    -> WriteCall
+payableCallRaw opts =
+    WriteCall
+        { contract = opts.contract
+        , method = ""
+        , args = []
+        , data = Just opts.data
         , value = Just opts.value
         , gasLimit = Nothing
         }
@@ -156,24 +212,36 @@ encodeRawSend rawHex =
 -}
 encode : WriteCall -> E.Value
 encode (WriteCall call) =
-    E.object
-        ([ ( "tag", E.string "send" )
-         , ( "contract", E.string (T.addressToString call.contract) )
-         , ( "method", E.string call.method )
-         , ( "args", E.list identity call.args )
-         ]
-            ++ (case call.value of
-                    Just v ->
-                        [ ( "value", E.string (BigInt.toString v) ) ]
+    let
+        base =
+            [ ( "tag", E.string "send" )
+            , ( "contract", E.string (T.addressToString call.contract) )
+            ]
 
-                    Nothing ->
-                        []
-               )
-            ++ (case call.gasLimit of
-                    Just g ->
-                        [ ( "gasLimit", E.int g ) ]
+        payload =
+            case call.data of
+                Just hex ->
+                    [ ( "data", E.string hex ) ]
 
-                    Nothing ->
-                        []
-               )
-        )
+                Nothing ->
+                    [ ( "method", E.string call.method )
+                    , ( "args", E.list identity call.args )
+                    ]
+
+        value =
+            case call.value of
+                Just v ->
+                    [ ( "value", E.string (BigInt.toString v) ) ]
+
+                Nothing ->
+                    []
+
+        gas =
+            case call.gasLimit of
+                Just g ->
+                    [ ( "gasLimit", E.int g ) ]
+
+                Nothing ->
+                    []
+    in
+    E.object (base ++ payload ++ value ++ gas)

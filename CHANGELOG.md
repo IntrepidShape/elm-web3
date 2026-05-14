@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.2.0 — 2026-05-14
+
+### Added — pure-Elm ABI calldata encoding
+
+The library no longer needs JavaScript to encode contract calls. Calldata
+production is now fully native Elm, which means generated dapps can drop
+to a pure-pass-through port bridge.
+
+- **`Web3.Abi.Calldata`** — new module. Produces canonical `"0x…"` calldata
+  from a baked selector and a list of typed `Slot`s. Implements the full
+  Solidity ABI head/tail layout (static slots inline, dynamic with
+  offset/tail), covering:
+  - Static: `address`, `uint256` / `uintN`, `int256` (two's-complement),
+    `bool`, `bytes32`, `bytesN`
+  - Dynamic: `string`, `bytes`, `list` (T[]), `tuple`
+  Verified against `cast calldata` vectors for the common ERC-20 shapes.
+- **`Web3.BigInt.toHexString`** — converts a BigInt to lowercase hex
+  without a `"0x"` prefix or leading zeros. Round-trip tested against
+  `fromHexString` over uint256 max.
+- **`Web3.Contract.Call.readCallRaw`** — variant of `readCall` that takes
+  pre-built hex `data` instead of method+args. The encoded port message
+  carries `data` directly; the JS bridge becomes pure pass-through.
+- **`Web3.Contract.Send.writeCallRaw` / `payableCallRaw`** — same pattern
+  for state-changing calls.
+
+The existing `readCall` / `writeCall` / `payableCall` API is unchanged —
+this is a pure additive release.
+
+---
+
 ## 1.1.0 — 2026-05-13
 
 ### Added
