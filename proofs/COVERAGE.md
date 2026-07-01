@@ -68,6 +68,8 @@ Proved.
 | `Abi.Calldata` output shape: `0x` + selector + lowercase-hex body that is always 32-byte-word aligned | `tests/CalldataFuzzTest.elm` | "universal shape" |
 | `Abi.Calldata` static `uint256` round-trip: each head word decodes back to its input (`decode ∘ encode = id`, multi-limb) | `tests/CalldataFuzzTest.elm` | "static uint256 round-trip" |
 | `Abi.Calldata` dynamic head/tail offset correctness: offsets 32-aligned, start at head size, strictly increasing, in bounds; length word + content intact | `tests/CalldataFuzzTest.elm` | "dynamic string head/tail offsets" |
+| `Units` general round-trip: `parseUnits d (formatUnits d n) = Just n` for any decimals `d∈[0,30]` and multi-limb `n` (exact, no precision loss) | `tests/UnitsFuzzTest.elm` | "parseUnits d (formatUnits d n) == Just n" |
+| `Units` ether/general agreement: `formatEther = formatUnits 18`; `parseEther` round-trips at ether scale; digits past `d` truncated | `tests/UnitsFuzzTest.elm` | "ether functions == decimals=18 general functions", "…ether scale (multi-limb)", "digits past d are ignored" |
 
 > The `tests/` suite also carries additional fuzz modules (`AbiFuzzTest`,
 > `BigIntFuzzTest`, `TransactionFuzzTest`, `WalletFuzzTest`, plus the fuzz

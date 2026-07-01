@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Verification — Units conversion property tests
+
+- **`tests/UnitsFuzzTest.elm`** — new fuzz module (5 properties) for
+  `Web3.Units`. Existing coverage fuzzed only `parseEther ∘ formatEther` at 18
+  decimals on sub-gwei values; this adds the general case (backlog #4): exact
+  `parseUnits d (formatUnits d n) = Just n` for any decimals `d ∈ [0,30]` and
+  multi-limb (uint256-scale) `n`; agreement between the ether-specific and
+  general functions (`formatEther = formatUnits 18`); ether-scale round-trip on
+  multi-limb values; and truncation of fractional digits past `d`. All hold —
+  conversions are exact with no precision loss.
+
 ### Verification — ABI calldata head/tail property tests
 
 - **`tests/CalldataFuzzTest.elm`** — new fuzz module (4 properties) for
