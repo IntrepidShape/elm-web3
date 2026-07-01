@@ -62,6 +62,9 @@ Proved.
 |----------|------|------|
 | `Multicall.encode` preserves the batch id and every call (contract, method, args) in order | `tests/MulticallTest.elm` | "envelope preserves id and every call in order" |
 | `Multicall.responseDecoder` preserves every result — order, `success`, and `data` intact (aggregation preserves per-call decode correctness) | `tests/MulticallTest.elm` | "decodes every result, in order, success+data intact", "result count is preserved" |
+| `BigInt` `add`/`mul` commutative & associative; `mul` distributes over `add` (multi-limb values) | `tests/BigIntLawsTest.elm` | "commutativity", "associativity", "distributivity" |
+| `BigInt.compare` agrees with integer order and is monotone under addition | `tests/BigIntLawsTest.elm` | "compare" |
+| `BigInt` division algorithm: `a = (a/b)*b + (a mod b)`, `0 ≤ a mod b < b`, div/mod by zero → `Nothing` | `tests/BigIntLawsTest.elm` | "division algorithm" |
 
 > The `tests/` suite also carries additional fuzz modules (`AbiFuzzTest`,
 > `BigIntFuzzTest`, `TransactionFuzzTest`, `WalletFuzzTest`, plus the fuzz
@@ -75,6 +78,10 @@ Proved.
 
 These theorems are stated with correct types and documented proof strategies.
 The sorry markers are temporary scaffolding — each has a complete proof sketch.
+They are **not** counted as Proved. Several of them (`natMul_val`,
+`natCompare_spec`, `natDivMod_spec`) now have a **Property-tested** backstop in
+`tests/BigIntLawsTest.elm` — fuzzed on multi-limb values — which is machine-
+verified evidence, though weaker than a proof.
 
 | Property | File | Proof strategy | Est. lines |
 |----------|------|---------------|------------|

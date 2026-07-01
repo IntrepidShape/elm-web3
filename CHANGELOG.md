@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Verification — BigInt algebraic-law property tests
+
+- **`tests/BigIntLawsTest.elm`** — new fuzz module (12 properties) covering the
+  arithmetic laws that `BigIntFuzzTest` did not: `add`/`mul` commutativity and
+  associativity, `mul` distributes over `add`, `compare` agrees with integer
+  order and is monotone under addition, and the division algorithm
+  (`a = (a/b)*b + (a mod b)`, `0 ≤ a mod b < b`, div/mod by zero → `Nothing`).
+  Values are built as genuine multi-limb bignums (past `Int` range) so carries
+  are exercised. All laws hold — no invariant violation found.
+- These back the still-`sorry` Lean obligations `natMul_val`,
+  `natCompare_spec`, `natDivMod_spec` with machine-verified (if weaker)
+  evidence. `proofs/COVERAGE.md` updated accordingly.
+
 ### Verification — Multicall property tests
 
 - **`tests/MulticallTest.elm`** — new fuzz module (3 properties) covering
