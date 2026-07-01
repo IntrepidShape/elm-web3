@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Verification — ABI calldata head/tail property tests
+
+- **`tests/CalldataFuzzTest.elm`** — new fuzz module (4 properties) for
+  `Web3.Abi.Calldata`, previously covered only by fixed `cast` vectors. Verifies
+  the invariants that catch a head/tail offset bug the fixed vectors would miss:
+  output is always `0x` + selector + lowercase-hex body aligned to 32-byte
+  words; static `uint256` slots round-trip (`decode ∘ encode = id` on multi-limb
+  values); and dynamic (`string`) head/tail offsets are 32-aligned, start at the
+  head size, strictly increase, stay in bounds, with correct length words and
+  intact content. All hold — the head/tail layout is sound under fuzzing.
+
 ### Verification — BigInt algebraic-law property tests
 
 - **`tests/BigIntLawsTest.elm`** — new fuzz module (12 properties) covering the

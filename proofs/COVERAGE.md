@@ -65,6 +65,9 @@ Proved.
 | `BigInt` `add`/`mul` commutative & associative; `mul` distributes over `add` (multi-limb values) | `tests/BigIntLawsTest.elm` | "commutativity", "associativity", "distributivity" |
 | `BigInt.compare` agrees with integer order and is monotone under addition | `tests/BigIntLawsTest.elm` | "compare" |
 | `BigInt` division algorithm: `a = (a/b)*b + (a mod b)`, `0 ≤ a mod b < b`, div/mod by zero → `Nothing` | `tests/BigIntLawsTest.elm` | "division algorithm" |
+| `Abi.Calldata` output shape: `0x` + selector + lowercase-hex body that is always 32-byte-word aligned | `tests/CalldataFuzzTest.elm` | "universal shape" |
+| `Abi.Calldata` static `uint256` round-trip: each head word decodes back to its input (`decode ∘ encode = id`, multi-limb) | `tests/CalldataFuzzTest.elm` | "static uint256 round-trip" |
+| `Abi.Calldata` dynamic head/tail offset correctness: offsets 32-aligned, start at head size, strictly increasing, in bounds; length word + content intact | `tests/CalldataFuzzTest.elm` | "dynamic string head/tail offsets" |
 
 > The `tests/` suite also carries additional fuzz modules (`AbiFuzzTest`,
 > `BigIntFuzzTest`, `TransactionFuzzTest`, `WalletFuzzTest`, plus the fuzz
