@@ -47,6 +47,25 @@ What is proved, what is not, and why.
 | Transaction: confirmation count is monotonically non-decreasing | `tla/TransactionSpec.tla` |
 | Transaction: every pending transaction eventually reaches a terminal state | `tla/TransactionSpec.tla` |
 
+### TLA+ — authored, pending model-check
+
+These specs are written and have `.cfg` models ready, but have **not** been run
+through TLC in the authoring environment (no Java/TLC available). They are
+**not** graded Model-checked until a machine verifies them — run
+`java -jar tla2tools.jar -config <spec>.cfg <spec>.tla` to promote them.
+
+| Property | File | Status |
+|----------|------|--------|
+| Sign: terminal states are absorbing (no retry path) | `tla/SignSpec.tla` | pending TLC |
+| Sign: every terminal state was entered from `SignPending` | `tla/SignSpec.tla` | pending TLC |
+| Sign: a message for a different correlation id never completes the pending sign (`NoCrossRequestConfusion`) | `tla/SignSpec.tla` | pending TLC |
+| Sign: `SignPending ⇒ ◇` terminal (liveness, under fairness) | `tla/SignSpec.tla` | pending TLC |
+
+> The `SignSpec` safety properties (terminal-absorbing, id-consistency, no
+> cross-request confusion) are *also* **Property-tested** in
+> `tests/SignFuzzTest.elm` — so they have machine-verified evidence today; the
+> TLA+ model-check is the stronger complement still pending.
+
 ### Manual — JS port layer
 
 - `JS_PORT_PROOF.md`: exhaustive case analysis of all 11 command handlers showing no exception escapes the boundary and every failure path sends a typed response.
@@ -131,4 +150,7 @@ lean RevertReason.lean
 
 # TLA+ (requires tla2tools.jar or TLA+ Toolbox)
 # Load WalletSpec.tla / TransactionSpec.tla, run TLC with provided .cfg files
+java -jar tla2tools.jar -config WalletSpec.cfg WalletSpec.tla
+java -jar tla2tools.jar -config TransactionSpec.cfg TransactionSpec.tla
+java -jar tla2tools.jar -config SignSpec.cfg SignSpec.tla   # authored, pending first check
 ```

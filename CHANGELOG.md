@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Verification — Sign TLA+ state-machine spec (authored, pending TLC)
+
+- **`proofs/tla/SignSpec.tla`** + **`SignSpec.cfg`** — new TLA+ spec modelling
+  the `Web3.Sign` state machine (`startSign` / `signUpdate`), the first formal
+  spec for the signing lifecycle. Safety invariants: terminal states absorbing,
+  every terminal state entered from `SignPending`, and — the key one —
+  `NoCrossRequestConfusion` (a message for a different correlation id can never
+  complete the pending sign). Liveness: `SignPending ⇒ ◇` terminal under
+  fairness. Includes a `GuardedSpec` (faithful to the Elm id-guard) and an
+  `UnguardedSpec` baseline that demonstrates the confusion invariant breaking
+  without the guard.
+- **Honesty:** no Java/TLC in the authoring environment, so this is graded
+  **pending** in `proofs/COVERAGE.md` — NOT Model-checked — until TLC runs it.
+  The same safety properties already have a machine-verified backstop in
+  `tests/SignFuzzTest.elm`.
+
 ### Verification — Sign non-confusion + state-machine property tests
 
 - **`tests/SignFuzzTest.elm`** — new fuzz module (7 properties) for `Web3.Sign`
