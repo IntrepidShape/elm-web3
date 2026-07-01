@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Verification — Sign non-confusion + state-machine property tests
+
+- **`tests/SignFuzzTest.elm`** — new fuzz module (7 properties) for `Web3.Sign`
+  (backlog #7). Verifies EIP-191 vs EIP-712 can never be confused on the wire
+  (`encode` always tags `signTypedData`, `personalSign` always tags
+  `personalSign`, tags distinct, exact id/from/message), and that the
+  `SignState` machine is safe under arbitrary message streams: terminal states
+  are absorbing, a response for a different correlation id never transitions a
+  pending sign (no cross-request confusion), and `SignIdle` never becomes
+  pending/signed from messages alone. All hold.
+
 ### Verification — Units conversion property tests
 
 - **`tests/UnitsFuzzTest.elm`** — new fuzz module (5 properties) for

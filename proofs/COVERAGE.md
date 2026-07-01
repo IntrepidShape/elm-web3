@@ -70,6 +70,8 @@ Proved.
 | `Abi.Calldata` dynamic head/tail offset correctness: offsets 32-aligned, start at head size, strictly increasing, in bounds; length word + content intact | `tests/CalldataFuzzTest.elm` | "dynamic string head/tail offsets" |
 | `Units` general round-trip: `parseUnits d (formatUnits d n) = Just n` for any decimals `d∈[0,30]` and multi-limb `n` (exact, no precision loss) | `tests/UnitsFuzzTest.elm` | "parseUnits d (formatUnits d n) == Just n" |
 | `Units` ether/general agreement: `formatEther = formatUnits 18`; `parseEther` round-trips at ether scale; digits past `d` truncated | `tests/UnitsFuzzTest.elm` | "ether functions == decimals=18 general functions", "…ether scale (multi-limb)", "digits past d are ignored" |
+| `Sign` EIP-191 vs EIP-712 non-confusion: `encode`→`signTypedData`, `personalSign`→`personalSign` — distinct tags, exact id/from/message | `tests/SignFuzzTest.elm` | "EIP-191 vs EIP-712 non-confusion" |
+| `Sign` state machine safety: terminal states absorbing under any message stream; a response for a different id never transitions a pending sign; `SignIdle` never becomes pending/signed from messages alone | `tests/SignFuzzTest.elm` | "state machine safety" |
 
 > The `tests/` suite also carries additional fuzz modules (`AbiFuzzTest`,
 > `BigIntFuzzTest`, `TransactionFuzzTest`, `WalletFuzzTest`, plus the fuzz
