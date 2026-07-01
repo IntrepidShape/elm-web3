@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Verification — Multicall property tests
+
+- **`tests/MulticallTest.elm`** — new fuzz module (3 properties) covering
+  `Web3.Multicall`, previously untested. Verifies that `encode` preserves the
+  batch id and every call (contract address, method, args) in order, and that
+  `responseDecoder` preserves every per-call result — order, `success`, and
+  `data` intact. This is the "aggregation preserves per-call decode
+  correctness" invariant from the proof backlog.
+- `proofs/COVERAGE.md` — added a **Property-tested (Elm fuzz)** section grading
+  the above.
+
+Test/doc only. No source changes; public API unchanged.
+
 ## 1.2.0 — 2026-05-14
 
 ### Added — pure-Elm ABI calldata encoding

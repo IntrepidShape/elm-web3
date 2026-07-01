@@ -51,6 +51,24 @@ What is proved, what is not, and why.
 
 - `JS_PORT_PROOF.md`: exhaustive case analysis of all 11 command handlers showing no exception escapes the boundary and every failure path sends a typed response.
 
+### Elm fuzz — property-tested runtime behaviour
+
+These are `elm-explorations/test` fuzz properties that the Elm test runner
+actually checks on every run (100 cases each by default). They verify runtime
+behaviour, not type soundness, so they are graded **Property-tested**, not
+Proved.
+
+| Property | File | Test |
+|----------|------|------|
+| `Multicall.encode` preserves the batch id and every call (contract, method, args) in order | `tests/MulticallTest.elm` | "envelope preserves id and every call in order" |
+| `Multicall.responseDecoder` preserves every result — order, `success`, and `data` intact (aggregation preserves per-call decode correctness) | `tests/MulticallTest.elm` | "decodes every result, in order, success+data intact", "result count is preserved" |
+
+> The `tests/` suite also carries additional fuzz modules (`AbiFuzzTest`,
+> `BigIntFuzzTest`, `TransactionFuzzTest`, `WalletFuzzTest`, plus the fuzz
+> sections of `TypesTest` and `UnitsTest`). They are exercised by the runner but
+> are not yet individually catalogued here; this table grows one verified entry
+> at a time.
+
 ---
 
 ## Remaining proof obligations (with sorry, proof sketches provided)
