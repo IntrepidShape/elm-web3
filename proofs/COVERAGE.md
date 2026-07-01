@@ -35,36 +35,45 @@ What is proved, what is not, and why.
 
 ### TLA+ — state machine invariants (model-checked by TLC)
 
+Verified with TLC (tla2tools 1.7.4 / TLC 2.19, Java 21). Reproduce with
+`proofs/tla/check-tla.sh` (or `java -jar tla2tools.jar -deadlock -config
+<spec>.cfg <spec>.tla`). `-deadlock` is intentional — these machines have
+genuine terminal sink states (`Confirmed`, `Signed`, …).
+
 | Property | File |
 |----------|------|
 | Wallet: `Connected`/`WrongChain` always carry address+chain | `tla/WalletSpec.tla` |
 | Wallet: `Disconnected`/`Error` never carry address | `tla/WalletSpec.tla` |
-| Wallet: `Disconnected` is always eventually reachable (no deadlock) | `tla/WalletSpec.tla` |
+| Wallet: `Disconnected` is always eventually reachable (no deadlock) — under weak fairness on `UserDisconnect` | `tla/WalletSpec.tla` |
 | Wallet: `Connected` only transitions through the expected set of states | `tla/WalletSpec.tla` |
-| Transaction: terminal states (`Confirmed`/`Failed`/`Rejected`) never transition out | `tla/TransactionSpec.tla` |
+| Transaction: no **port message** transitions a terminal state; the only exit is an explicit user retry to `Idle` | `tla/TransactionSpec.tla` |
 | Transaction: `Submitted` only reachable from `AwaitingSignature` | `tla/TransactionSpec.tla` |
 | Transaction: `Confirming` always carries a valid hash | `tla/TransactionSpec.tla` |
 | Transaction: confirmation count is monotonically non-decreasing | `tla/TransactionSpec.tla` |
 | Transaction: every pending transaction eventually reaches a terminal state | `tla/TransactionSpec.tla` |
+| Sign: terminal states are absorbing (`TerminalAbsorbing`) | `tla/SignSpec.tla` |
+| Sign: every terminal state was entered from `SignPending` (`TerminalFromPending`) | `tla/SignSpec.tla` |
+| Sign: a message for a different correlation id never completes the pending sign (`NoCrossRequestConfusion`) | `tla/SignSpec.tla` |
+| Sign: `SignPending ⇒ ◇` terminal (liveness, under fairness) | `tla/SignSpec.tla` |
 
-### TLA+ — authored, pending model-check
-
-These specs are written and have `.cfg` models ready, but have **not** been run
-through TLC in the authoring environment (no Java/TLC available). They are
-**not** graded Model-checked until a machine verifies them — run
-`java -jar tla2tools.jar -config <spec>.cfg <spec>.tla` to promote them.
-
-| Property | File | Status |
-|----------|------|--------|
-| Sign: terminal states are absorbing (no retry path) | `tla/SignSpec.tla` | pending TLC |
-| Sign: every terminal state was entered from `SignPending` | `tla/SignSpec.tla` | pending TLC |
-| Sign: a message for a different correlation id never completes the pending sign (`NoCrossRequestConfusion`) | `tla/SignSpec.tla` | pending TLC |
-| Sign: `SignPending ⇒ ◇` terminal (liveness, under fairness) | `tla/SignSpec.tla` | pending TLC |
-
-> The `SignSpec` safety properties (terminal-absorbing, id-consistency, no
-> cross-request confusion) are *also* **Property-tested** in
-> `tests/SignFuzzTest.elm` — so they have machine-verified evidence today; the
-> TLA+ model-check is the stronger complement still pending.
+> **Correction (this pass).** These specs were previously listed as
+> model-checked but had **never actually been run through TLC** — they did not
+> parse (a `----` divider before `EXTENDS`; and `[]`-of-bare-action temporal
+> properties). Fixing the syntax and running TLC surfaced three real defects,
+> now fixed and re-verified:
+> 1. `TerminalIsTerminal` was stated as "terminal states *never* transition
+>    out", but the spec's own `UserRetry` resets `Failed`/`Rejected → Idle`.
+>    Corrected to "no port message moves a terminal state; only a user retry to
+>    `Idle` does."
+> 2. `WalletSpec` mixed integer chain ids with the string `NONE` sentinel, so
+>    TLC aborted comparing `"NONE"` with `369`. Modelled chain ids as strings
+>    (only equality is ever used).
+> 3. `NoDeadlock` (always-eventually-`Disconnected`) did **not** hold under
+>    `WF(Next)` alone — the wallet could churn in `Connected` forever. It holds
+>    once `UserDisconnect` is given weak fairness (its intended meaning).
+>
+> The `SignSpec` safety properties are *also* **Property-tested** in
+> `tests/SignFuzzTest.elm`.
 
 ### Manual — JS port layer
 
@@ -148,9 +157,11 @@ lean BigInt.lean
 lean AbiCodec.lean
 lean RevertReason.lean
 
-# TLA+ (requires tla2tools.jar or TLA+ Toolbox)
-# Load WalletSpec.tla / TransactionSpec.tla, run TLC with provided .cfg files
-java -jar tla2tools.jar -config WalletSpec.cfg WalletSpec.tla
-java -jar tla2tools.jar -config TransactionSpec.cfg TransactionSpec.tla
-java -jar tla2tools.jar -config SignSpec.cfg SignSpec.tla   # authored, pending first check
+# TLA+ (requires Java + tla2tools.jar; JDK 11+, verified on corretto-21)
+cd proofs/tla
+./check-tla.sh                 # model-checks every *.tla with its *.cfg
+# or individually (note -deadlock: terminal sink states are intended):
+java -jar tla2tools.jar -deadlock -config WalletSpec.cfg      WalletSpec.tla
+java -jar tla2tools.jar -deadlock -config TransactionSpec.cfg TransactionSpec.tla
+java -jar tla2tools.jar -deadlock -config SignSpec.cfg        SignSpec.tla
 ```

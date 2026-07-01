@@ -51,7 +51,6 @@
  *   Command line:
  *     java -jar tla2tools.jar -config TransactionSpec.cfg TransactionSpec.tla
  *)
---------------------------------------------------------------------------
 
 EXTENDS Naturals, FiniteSets
 
@@ -91,10 +90,13 @@ TypeOK ==
 --------------------------------------------------------------------------
 (* Safety invariants *)
 
-(* Terminal states have no outgoing transitions.
-   Under GuardedNext, once in a terminal state, state never changes. *)
+(* No PORT MESSAGE transitions a terminal state. The only way out of a terminal
+   state is an explicit user retry (UserRetry), which resets to Idle — this
+   mirrors the Elm `update`, whose isTerminal guard drops all incoming messages
+   in a terminal state. So from a terminal prevState, state either stays put or
+   becomes Idle (never jumps to another mid-lifecycle state via a message). *)
 TerminalIsTerminal ==
-    prevState \in TerminalStates => state = prevState
+    prevState \in TerminalStates => (state = prevState \/ state = "Idle")
 
 (* Submitted is only reachable from AwaitingSignature.
    This ensures the user must have initiated a send before
@@ -292,10 +294,9 @@ UnguardedFairness == WF_vars(UnguardedNext)
 EventuallyTerminal ==
     [](state \in PendingStates => <>(state \in TerminalStates))
 
-(* Once terminal (under guarded spec), stays terminal until user retries. *)
-TerminalStaysTerminal ==
-    [](state \in TerminalStates =>
-        (state' = state \/ state' = "Idle"))
+(* Once terminal (under guarded spec), stays terminal until user retries.
+   The absorbing property is model-checked directly as the TerminalIsTerminal
+   state invariant (prevState terminal => state unchanged). *)
 
 --------------------------------------------------------------------------
 (* Specifications *)

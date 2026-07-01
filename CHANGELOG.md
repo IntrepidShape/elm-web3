@@ -2,21 +2,30 @@
 
 ## Unreleased
 
-### Verification — Sign TLA+ state-machine spec (authored, pending TLC)
+### Verification — TLA+ specs now actually model-checked by TLC (+ new SignSpec)
 
-- **`proofs/tla/SignSpec.tla`** + **`SignSpec.cfg`** — new TLA+ spec modelling
-  the `Web3.Sign` state machine (`startSign` / `signUpdate`), the first formal
-  spec for the signing lifecycle. Safety invariants: terminal states absorbing,
-  every terminal state entered from `SignPending`, and — the key one —
-  `NoCrossRequestConfusion` (a message for a different correlation id can never
-  complete the pending sign). Liveness: `SignPending ⇒ ◇` terminal under
-  fairness. Includes a `GuardedSpec` (faithful to the Elm id-guard) and an
-  `UnguardedSpec` baseline that demonstrates the confusion invariant breaking
-  without the guard.
-- **Honesty:** no Java/TLC in the authoring environment, so this is graded
-  **pending** in `proofs/COVERAGE.md` — NOT Model-checked — until TLC runs it.
-  The same safety properties already have a machine-verified backstop in
-  `tests/SignFuzzTest.elm`.
+- **`proofs/tla/SignSpec.tla`** + **`SignSpec.cfg`** — new TLA+ spec for the
+  `Web3.Sign` state machine (`startSign` / `signUpdate`), the first formal spec
+  for the signing lifecycle. Safety: terminal absorbing, every terminal entered
+  from `SignPending`, and `NoCrossRequestConfusion` (a message for a different
+  correlation id can never complete the pending sign). Liveness: `SignPending ⇒
+  ◇` terminal. Includes an `UnguardedSpec` baseline that TLC confirms *breaks*
+  `NoCrossRequestConfusion` — proving the guard matters.
+- **`proofs/tla/check-tla.sh`** — runner that model-checks every spec with TLC.
+- **Correction — the TLA+ specs were never actually being checked.** All three
+  failed to parse in TLC (a `----` divider before `EXTENDS`; `[]`-of-bare-action
+  temporal properties). After fixing the syntax, TLC surfaced and we fixed three
+  real defects, then re-verified all specs green:
+  - `TransactionSpec.TerminalIsTerminal` claimed terminal states *never* leave,
+    contradicting the spec's own `UserRetry` (`Failed`/`Rejected → Idle`);
+    corrected to "no port message moves a terminal state."
+  - `WalletSpec` mixed integer chain ids with the string `NONE` sentinel — TLC
+    aborted comparing `"NONE"` with `369`; chain ids now modelled as strings.
+  - `WalletSpec.NoDeadlock` did not hold under `WF(Next)` alone (the wallet
+    could stay `Connected` forever); holds once `UserDisconnect` has weak
+    fairness.
+  `proofs/COVERAGE.md` updated to match; the three specs are now genuinely
+  Model-checked (TLC 2.19 / Java 21).
 
 ### Verification — Sign non-confusion + state-machine property tests
 

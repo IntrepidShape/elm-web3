@@ -39,13 +39,13 @@
  *   PendingEventuallyResolves  — SignPending => <> terminal (under fairness)
  *   TerminalStaysTerminal      — once terminal, state never changes
  *
- * To verify with TLC:
- *   java -jar tla2tools.jar -config SignSpec.cfg SignSpec.tla
+ * To verify with TLC (-deadlock: terminal sink states are intended):
+ *   java -jar tla2tools.jar -deadlock -config SignSpec.cfg SignSpec.tla
  *
- * STATUS: authored, NOT yet model-checked (no TLC available in the authoring
- * environment). Graded "pending" in proofs/COVERAGE.md until TLC verifies it.
+ * STATUS: model-checked green (TLC 2.19 / Java 21). GuardedSpec holds all
+ * invariants; UnguardedSpec confirms NoCrossRequestConfusion breaks without
+ * the id-guard.
  *)
---------------------------------------------------------------------------
 
 EXTENDS Naturals
 
@@ -197,9 +197,9 @@ GuardedFairness == WF_vars(GuardedNext)
 PendingEventuallyResolves ==
     [](state = "SignPending" => <>(state \in TerminalStates))
 
-(* Once terminal, the state never changes. *)
-TerminalStaysTerminal ==
-    [](state \in TerminalStates => (state' = state))
+(* "Once terminal, the state never changes" is model-checked directly as the
+   TerminalAbsorbing state invariant (prevState terminal => state = prevState),
+   which is simpler and avoids an action-in-box temporal property. *)
 
 --------------------------------------------------------------------------
 (* Specifications *)

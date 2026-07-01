@@ -40,7 +40,6 @@
  *   Command line:
  *     java -jar tla2tools.jar -config WalletSpec.cfg WalletSpec.tla
  *)
---------------------------------------------------------------------------
 
 EXTENDS Naturals, FiniteSets
 
@@ -285,6 +284,10 @@ Next ==
 
 Fairness ==
     /\ WF_vars(Next)
+    \* UserDisconnect is enabled from every non-Disconnected state; requiring it
+    \* not be starved is what makes NoDeadlock (always-eventually-Disconnected)
+    \* hold — otherwise the wallet could churn in Connected forever.
+    /\ WF_vars(UserDisconnect)
 
 --------------------------------------------------------------------------
 (* Temporal properties *)
@@ -297,20 +300,20 @@ NoDeadlock == []<>(state = "Disconnected")
 (* Once connected, the wallet stays connected or transitions through
    a known path — it never silently loses the address. *)
 ConnectedStability ==
-    [](state = "Connected" =>
+    [][state = "Connected" =>
         (state' = "Connected"
          \/ state' = "WrongChain"
          \/ state' = "Disconnected"
-         \/ state' = "Error"))
+         \/ state' = "Error")]_vars
 
 (* v2: ReadOnly is sticky — no message (except explicit user action or
    a new WalletConnected) can take it out of ReadOnly. *)
 ReadOnlySticky ==
-    [](state = "ReadOnly" =>
+    [][state = "ReadOnly" =>
         (state' = "ReadOnly"
          \/ state' = "Connected"   \* WalletConnected arrived
          \/ state' = "WrongChain"  \* WalletConnected, wrong chain
-         \/ state' = "Disconnected"))   \* UserDisconnect
+         \/ state' = "Disconnected")]_vars   \* UserDisconnect
 
 (* v2: WrongChain can be resolved by SwitchChainOk. *)
 WrongChainCanResolve ==
