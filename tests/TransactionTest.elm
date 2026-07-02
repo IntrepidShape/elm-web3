@@ -92,6 +92,42 @@ stateTransitionTests =
 
                     s ->
                         Expect.fail ("Expected Confirming, got: " ++ txStatusLabel s)
+        , test "Submitted + TxConfirmation with count 0 is a no-op (counts start at 1)" <|
+            \_ ->
+                case Tx.update (Tx.TxConfirmation validHash 0) inSubmittedState of
+                    Tx.Submitted _ ->
+                        Expect.pass
+
+                    s ->
+                        Expect.fail ("Expected Submitted to remain, got: " ++ txStatusLabel s)
+        , test "Confirming + TxConfirmation with higher count -> count increases" <|
+            \_ ->
+                case Tx.update (Tx.TxConfirmation validHash 3) inConfirmingState of
+                    Tx.Confirming _ count ->
+                        count |> Expect.equal 3
+
+                    s ->
+                        Expect.fail ("Expected Confirming, got: " ++ txStatusLabel s)
+        , test "Confirming + TxConfirmation with LOWER count is dropped (monotonic invariant)" <|
+            \_ ->
+                let
+                    atThree =
+                        Tx.update (Tx.TxConfirmation validHash 3) inConfirmingState
+                in
+                case Tx.update (Tx.TxConfirmation validHash 2) atThree of
+                    Tx.Confirming _ count ->
+                        count |> Expect.equal 3
+
+                    s ->
+                        Expect.fail ("Expected Confirming 3 to remain, got: " ++ txStatusLabel s)
+        , test "Confirming + TxConfirmation with EQUAL count is dropped (strictly increasing)" <|
+            \_ ->
+                case Tx.update (Tx.TxConfirmation validHash 1) inConfirmingState of
+                    Tx.Confirming _ count ->
+                        count |> Expect.equal 1
+
+                    s ->
+                        Expect.fail ("Expected Confirming 1 to remain, got: " ++ txStatusLabel s)
         , test "Confirming + TxConfirmed -> Confirmed with receipt data" <|
             \_ ->
                 case Tx.update (Tx.TxConfirmed emptyReceipt) inConfirmingState of

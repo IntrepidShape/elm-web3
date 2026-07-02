@@ -195,15 +195,30 @@ updateNonTerminal msg status =
                     Submitted _ ->
                         case T.txHash hash of
                             Just h ->
-                                Confirming h count
+                                if count >= 1 then
+                                    Confirming h count
+
+                                else
+                                    status
 
                             Nothing ->
                                 status
 
-                    Confirming _ _ ->
+                    Confirming _ current ->
+                        -- Confirmation counts only increase (the documented
+                        -- invariant, matching MonotonicConfirmations in
+                        -- proofs/tla/TransactionSpec.tla). Stale or reordered
+                        -- port messages with a lower/equal count are dropped.
+                        -- The hash is taken from the message: a wallet
+                        -- speed-up (EIP-1559 replacement) legitimately swaps
+                        -- in a new hash for the same logical transaction.
                         case T.txHash hash of
                             Just h ->
-                                Confirming h count
+                                if count > current then
+                                    Confirming h count
+
+                                else
+                                    status
 
                             Nothing ->
                                 status

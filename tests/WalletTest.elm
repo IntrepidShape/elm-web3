@@ -104,7 +104,7 @@ stateTransitionTests =
 
                     _ ->
                         Expect.fail "Expected WrongChain"
-        , test "WrongChain + ChainChanged is a no-op (only Connected handles ChainChanged)" <|
+        , test "WrongChain + ChainChanged to expected chain -> Connected (manual switch in wallet UI recovers)" <|
             \_ ->
                 let
                     wrongChain =
@@ -113,12 +113,48 @@ stateTransitionTests =
                     newState =
                         Wallet.update pulseChain (Wallet.ChainChanged 369) wrongChain
                 in
+                Wallet.isConnected newState |> Expect.equal True
+        , test "WrongChain + ChainChanged to another wrong chain -> stays WrongChain (chainId updated)" <|
+            \_ ->
+                let
+                    wrongChain =
+                        Wallet.update pulseChain (Wallet.WalletConnected validAddress 1) Wallet.Disconnected
+
+                    newState =
+                        Wallet.update pulseChain (Wallet.ChainChanged 56) wrongChain
+                in
                 case newState of
+                    Wallet.WrongChain info _ ->
+                        T.chainIdToInt info.chainId |> Expect.equal 56
+
+                    _ ->
+                        Expect.fail "Expected WrongChain to remain"
+        , test "Connected + ReadOnlyMode is a no-op (stray readOnly must not tear down a session)" <|
+            \_ ->
+                let
+                    connected =
+                        Wallet.update pulseChain (Wallet.WalletConnected validAddress 369) Wallet.Disconnected
+                in
+                Wallet.update pulseChain Wallet.ReadOnlyMode connected
+                    |> Wallet.isConnected
+                    |> Expect.equal True
+        , test "WrongChain + ReadOnlyMode is a no-op" <|
+            \_ ->
+                let
+                    wrongChain =
+                        Wallet.update pulseChain (Wallet.WalletConnected validAddress 1) Wallet.Disconnected
+                in
+                case Wallet.update pulseChain Wallet.ReadOnlyMode wrongChain of
                     Wallet.WrongChain _ _ ->
                         Expect.pass
 
                     _ ->
-                        Expect.fail "Expected WrongChain to remain (ChainChanged only handled in Connected state)"
+                        Expect.fail "Expected WrongChain to survive ReadOnlyMode"
+        , test "Disconnected + ReadOnlyMode -> ReadOnly" <|
+            \_ ->
+                Wallet.update pulseChain Wallet.ReadOnlyMode Wallet.Disconnected
+                    |> Wallet.isReadOnly
+                    |> Expect.equal True
         , test "Disconnected + ChainChanged -> Disconnected (no-op)" <|
             \_ ->
                 Wallet.update pulseChain (Wallet.ChainChanged 1) Wallet.Disconnected

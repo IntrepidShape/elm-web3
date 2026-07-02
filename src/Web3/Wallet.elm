@@ -195,6 +195,22 @@ update expectedChain msg state =
                     else
                         WrongChain newInfo expectedChain
 
+                WrongChain info _ ->
+                    -- The user switched chains in the wallet UI itself (no
+                    -- app-initiated switchChain round-trip). If they landed on
+                    -- the expected chain, recover to Connected — otherwise
+                    -- we'd stay stuck in WrongChain with the wallet already
+                    -- on the right chain.
+                    let
+                        newInfo =
+                            { info | chainId = T.chainId chain }
+                    in
+                    if chain == T.chainIdToInt expectedChain then
+                        Connected newInfo
+
+                    else
+                        WrongChain newInfo expectedChain
+
                 _ ->
                     state
 
@@ -226,7 +242,18 @@ update expectedChain msg state =
             state
 
         ReadOnlyMode ->
-            ReadOnly
+            -- "rpcUrl configured but no wallet injected" — only meaningful
+            -- when there is no live wallet session. A stray readOnly event
+            -- must not tear down Connected/WrongChain.
+            case state of
+                Connected _ ->
+                    state
+
+                WrongChain _ _ ->
+                    state
+
+                _ ->
+                    ReadOnly
 
         ChainAdded ->
             -- The chain has been added to the wallet but the active chain has not changed.

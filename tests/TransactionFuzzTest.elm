@@ -227,6 +227,7 @@ suite =
         , txRejectedAlwaysRejectsTest
         , txFailedAlwaysFailsTest
         , txResetFromTerminalTest
+        , monotonicConfirmationsTest
         ]
 
 
@@ -507,3 +508,44 @@ txResetFromTerminalTest =
 
             else
                 afterReset |> Expect.equal anyState
+
+
+{-| Confirmation counts are strictly increasing while Confirming — under ANY
+message stream, including counts of 0, negatives, and out-of-order deliveries
+(the MonotonicConfirmations invariant from proofs/tla/TransactionSpec.tla).
+-}
+monotonicConfirmationsTest : Test
+monotonicConfirmationsTest =
+    fuzz2 initialStateFuzzer (Fuzz.list hostileMsgFuzzer) "confirmation count never decreases across any message stream" <|
+        \start msgs ->
+            let
+                step msg ( status, ok ) =
+                    let
+                        next =
+                            Tx.update msg status
+                    in
+                    case ( status, next ) of
+                        ( Tx.Confirming _ before, Tx.Confirming _ after ) ->
+                            ( next, ok && after >= before )
+
+                        _ ->
+                            ( next, ok )
+            in
+            List.foldl step ( start, True ) msgs
+                |> Tuple.second
+                |> Expect.equal True
+
+
+{-| Msg fuzzer with hostile confirmation counts (0, negative, out of order).
+-}
+hostileMsgFuzzer : Fuzzer Tx.Msg
+hostileMsgFuzzer =
+    Fuzz.oneOf
+        [ Fuzz.map Tx.TxSubmitted txHashStringFuzzer
+        , Fuzz.map2 Tx.TxConfirmation txHashStringFuzzer (Fuzz.intRange -5 100)
+        , Fuzz.map Tx.TxConfirmed receiptJsonFuzzer
+        , Fuzz.map Tx.TxFailed Fuzz.string
+        , Fuzz.constant Tx.TxRejected
+        , Fuzz.constant Tx.TxReset
+        , Fuzz.map Tx.TxReceiptNotFound Fuzz.string
+        ]
