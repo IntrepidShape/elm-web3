@@ -90,7 +90,7 @@ Legend: ✅ covered · 🟡 partial/via-port-only · ❌ not covered (with verdi
 | Units (wei/gwei/ether, arbitrary decimals) | ✅ | fuzz-verified exact |
 | Multicall3 aggregate | ✅ | `Multicall` (fuzz-verified codec) |
 | Revert-reason decoding (`Error(string)` selector) | ✅ | `Abi.Decode.decodeRevertReason` (Lean partial + fuzz) |
-| Custom error decoding (non-`Error(string)` selectors) | ❌ | **gap** — `decodeRevertReason` handles the standard selector only; typed custom errors (solc `error Foo(uint)`) return `Nothing` |
+| Custom error decoding (non-`Error(string)` selectors) | ✅ | `Abi.Decode.decodeCustomError` (1.4.0) — baked selector fragments, disjoint-domain composition with `decodeRevertReason` |
 
 ## 6. Wire-protocol integrity
 
@@ -133,8 +133,7 @@ routine reads, both write paths, log streaming, and the full ABI/BigInt/Units
 stack with formal backing. It is **not** an exhaustive JSON-RPC binding — by
 design. The ranked genuine gaps:
 
-1. Custom-error revert decoding (typed solc errors)
-2. WS `newHeads` for `watchBlockNumber` (replace 4s poll)
-3. Port F1–F7 re-audit against the current bridge
-4. EIP-5792 batched calls (watch adoption before building; activation
+1. WS `newHeads` for `watchBlockNumber` (replace 4s poll)
+2. Port F1–F7 re-audit against the current bridge
+3. EIP-5792 batched calls (watch adoption before building; activation
    criterion: two major wallets shipping `wallet_sendCalls`)

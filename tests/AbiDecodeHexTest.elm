@@ -13,6 +13,7 @@ suite =
     describe "Web3.Abi.Decode — hex slot API"
         [ hexSlotTests
         , realRevertVectorsTest
+        , customErrorTest
         , uint256SlotTests
         , addressSlotTests
         , boolSlotTests
@@ -417,5 +418,52 @@ realRevertVectorsTest =
             \_ ->
                 Decode.decodeRevertReason
                     "0x4e487b710000000000000000000000000000000000000000000000000000000000000011"
+                    |> Expect.equal Nothing
+        ]
+
+
+{-| B2 — typed custom-error decoding with baked selector fragments. -}
+customErrorTest : Test
+customErrorTest =
+    let
+        word i tail =
+            String.slice (i * 64) (i * 64 + 64) tail
+                |> (\w -> BigInt.fromHexString ("0x" ++ w))
+                |> Maybe.map BigInt.toString
+
+        fragments =
+            [ { selector = "cf479181"
+              , name = "InsufficientBalance"
+              , decodeArgs = \tail -> Maybe.map2 (\a b -> [ a, b ]) (word 0 tail) (word 1 tail)
+              }
+            , { selector = "0a14c4b5"
+              , name = "Unauthorized"
+              , decodeArgs = \_ -> Just []
+              }
+            ]
+
+        twoArgPayload =
+            "0xcf479181"
+                ++ "0000000000000000000000000000000000000000000000000000000000000005"
+                ++ "000000000000000000000000000000000000000000000000000000000000000a"
+    in
+    describe "decodeCustomError"
+        [ test "two-arg uint256 error decodes with rendered args" <|
+            \_ ->
+                Decode.decodeCustomError fragments twoArgPayload
+                    |> Expect.equal (Just { name = "InsufficientBalance", args = [ "5", "10" ] })
+        , test "no-arg error decodes" <|
+            \_ ->
+                Decode.decodeCustomError fragments "0x0a14c4b5"
+                    |> Expect.equal (Just { name = "Unauthorized", args = [] })
+        , test "unknown selector -> Nothing" <|
+            \_ ->
+                Decode.decodeCustomError fragments "0xdeadbeef00"
+                    |> Expect.equal Nothing
+        , test "refuses the standard Error(string) selector (disjoint domains)" <|
+            \_ ->
+                Decode.decodeCustomError
+                    [ { selector = "08c379a0", name = "Hijack", decodeArgs = \_ -> Just [] } ]
+                    "0x08c379a000"
                     |> Expect.equal Nothing
         ]

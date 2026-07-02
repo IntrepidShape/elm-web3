@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.0 — 2026-07-02
+
+### Added
+
+- **`Abi.Decode.decodeCustomError`** — typed Solidity custom errors
+  (`error Foo(uint256,uint256)`) decoded via selector fragments the app
+  bakes at codegen time (no runtime keccak, same philosophy as calldata
+  selectors). Refuses the standard `Error(string)`/`Panic` selectors so it
+  composes with `decodeRevertReason` unambiguously — disjoint domains by
+  construction. Four regression vectors added (459 tests green).
+
+
 ## 1.3.0 — 2026-07-02
 
 ### Added

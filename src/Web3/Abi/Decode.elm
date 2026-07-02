@@ -19,6 +19,7 @@ module Web3.Abi.Decode exposing
     , tuple2Hex
     , tuple3Hex
     , decodeRevertReason
+    , decodeCustomError
     )
 
 {-| Helpers to decode contract return values from JSON
@@ -28,7 +29,7 @@ received through ports from the JS Web3 layer.
 @docs uint8, uint16, uint32, uint64, uint128
 @docs hexSlot, uint256Slot, addressSlot, boolSlot, stringSlot, listSlot
 @docs tuple2Hex, tuple3Hex
-@docs decodeRevertReason
+@docs decodeRevertReason, decodeCustomError
 
 -}
 
@@ -528,3 +529,68 @@ utf8Help bytes acc =
             else
                 -- Continuation byte without a leading byte — malformed
                 Nothing
+
+
+{-| Decode a typed Solidity custom error (`error InsufficientBalance(uint256
+have, uint256 want)`) from raw revert data, given selector fragments the app
+bakes at codegen time — the same no-runtime-keccak philosophy as
+`Web3.Abi.Calldata` selectors.
+
+    fragments =
+        [ { selector = "cf479181"      -- keccak("InsufficientBalance(uint256,uint256)")[:4]
+          , name = "InsufficientBalance"
+          , decodeArgs = \tail -> Maybe.map2 (\a b -> [ a, b ])
+                (word 0 tail) (word 1 tail)
+          }
+        ]
+
+    decodeCustomError fragments revertData
+    --> Just { name = "InsufficientBalance", args = [ "5", "10" ] }
+
+`decodeArgs` receives the ABI-encoded argument tail as bare hex (no `0x`,
+selector already stripped) and renders each argument to a display string —
+build it from this module's slot readers.
+
+Precedence, decided: this function REFUSES the standard selectors
+`08c379a0` (`Error(string)`) and `4e487b71` (`Panic(uint256)`) so it
+composes with [`decodeRevertReason`](#decodeRevertReason) unambiguously in
+either order — each decoder has a disjoint domain.
+
+Returns `Nothing` for: standard selectors, unknown selectors, payloads
+shorter than a selector, or a fragment whose `decodeArgs` fails.
+
+-}
+decodeCustomError :
+    List { selector : String, name : String, decodeArgs : String -> Maybe (List String) }
+    -> String
+    -> Maybe { name : String, args : List String }
+decodeCustomError fragments hex =
+    let
+        raw =
+            if String.startsWith "0x" hex || String.startsWith "0X" hex then
+                String.dropLeft 2 hex
+
+            else
+                hex
+
+        selector =
+            String.toLower (String.left 8 raw)
+
+        tail =
+            String.dropLeft 8 raw
+    in
+    if String.length raw < 8 then
+        Nothing
+
+    else if selector == "08c379a0" || selector == "4e487b71" then
+        Nothing
+
+    else
+        fragments
+            |> List.filter (\f -> String.toLower f.selector == selector)
+            |> List.head
+            |> Maybe.andThen
+                (\f ->
+                    f.decodeArgs tail
+                        |> Maybe.map (\args -> { name = f.name, args = args })
+                )
