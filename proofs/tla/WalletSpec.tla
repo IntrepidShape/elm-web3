@@ -15,30 +15,36 @@
  *   - ReadOnly state: rpcUrl present but no injected wallet.
  *     Reads work; writes will fail at the JS layer.
  *   - ReadOnly is a "sticky" state: WalletDisconnected, WalletError,
- *     ChainChanged, AccountChanged are all no-ops in ReadOnly.
+ *     ChainChanged, AccountChanged are all no-ops in ReadOnly. The only
+ *     exits are a WalletConnected announcement (-> Connected/WrongChain,
+ *     or Error on a malformed address).
  *   - SwitchChainOk: successful chain switch from WrongChain → Connected
  *     (or WrongChain if the new chain is still wrong).
+ *   - ChainChanged also acts from WrongChain: a manual switch in the wallet
+ *     UI to the expected chain recovers to Connected.
+ *   - ReadOnlyMode is ignored when a live session exists (Connected /
+ *     WrongChain) — a stray readOnly event must not tear down a session.
  *   - ChainAdded, AssetWatched, GotPermissions: all no-ops on state.
  *
- * Invariants:
- *   TypeOK               — state is always one of the six valid states
- *   ConnectedRequiresAddr — Connected/WrongChain always carry an address
- *   ReadOnlyHasNoAddr     — ReadOnly state never carries an address
- *   NoDeadlock            — Disconnected is always reachable (temporal)
+ * Conformance to src/Web3/Wallet.elm is audited action-by-action in
+ * proofs/TLA_CONFORMANCE.md. Chain ids are modeled as strings (only equality
+ * is ever used) so the NONE sentinel is type-consistent for TLC.
+ *
+ * Invariants (state):
+ *   TypeOK                — variables are well-typed
+ *   ConnectedRequiresAddress — Connected/WrongChain always carry addr+chain
+ *   DisconnectedHasNoAddress / ErrorHasNoAddress / ReadOnlyHasNoAddr
+ * Properties (temporal/action):
+ *   EventuallyAtRest      — every wallet session eventually returns to a
+ *                           resting state (Disconnected or ReadOnly), under
+ *                           weak fairness on UserDisconnect
+ *   ConnectedStability    — Connected only exits to WrongChain/Disconnected/
+ *                           Error (or stays Connected)
+ *   ReadOnlySticky        — ReadOnly only exits via WalletConnected
  *
  * To verify with TLC:
- *   1. Install the TLA+ Toolbox or tla2tools.jar
- *   2. Create a model with:
- *        - Spec: Spec
- *        - Constants: ADDRESSES = {"0xaaa", "0xbbb"}
- *                     CHAINS   = {1, 369}
- *                     EXPECTED_CHAIN = 369
- *        - Invariants: TypeOK, ConnectedRequiresAddress, ReadOnlyHasNoAddr
- *        - Properties: NoDeadlock
- *   3. Run TLC. With the small constant sets above it terminates quickly.
- *
- *   Command line:
- *     java -jar tla2tools.jar -config WalletSpec.cfg WalletSpec.tla
+ *   java -jar tla2tools.jar -config WalletSpec.cfg WalletSpec.tla
+ *   (no -deadlock needed: every state has an enabled action)
  *)
 
 EXTENDS Naturals, FiniteSets
@@ -107,9 +113,14 @@ UserConnect ==
     /\ chain' = NONE
     /\ hasError' = FALSE
 
-(* User clicks "Disconnect" — from any state except Disconnected *)
+(* User clicks "Disconnect". In the Elm code this is a port round-trip: the
+   disconnect command makes JS emit a 'disconnected' event, and
+   Wallet.update WalletDisconnected sends every state to Disconnected EXCEPT
+   ReadOnly, which is sticky (there is NO Elm code path ReadOnly ->
+   Disconnected; ReadOnly only exits via a WalletConnected announcement).
+   Modeled faithfully: not enabled from ReadOnly. *)
 UserDisconnect ==
-    /\ state /= "Disconnected"
+    /\ state \notin {"Disconnected", "ReadOnly"}
     /\ state' = "Disconnected"
     /\ addr' = NONE
     /\ chain' = NONE
@@ -164,16 +175,19 @@ EvtWalletDisconnected ==
          /\ hasError' = FALSE
 
 (* v2: ReadOnlyMode — rpcUrl configured but no wallet injected.
-   Only meaningful from Disconnected or Connecting. *)
+   The Elm update ignores this event when a live session exists
+   (Connected/WrongChain): a stray readOnly announcement must not tear down
+   a connected wallet. Meaningful only from Disconnected, Connecting, Error. *)
 EvtReadOnlyMode ==
-    /\ state /= "ReadOnly"
+    /\ state \in {"Disconnected", "Connecting", "Error"}
     /\ state' = "ReadOnly"
     /\ addr' = NONE
     /\ chain' = NONE
     /\ hasError' = FALSE
 
-(* ChainChanged — only acts when in Connected state.
-   ReadOnly is unaffected. *)
+(* ChainChanged — acts from Connected AND WrongChain (the user can switch
+   chains directly in the wallet UI; if they land on the expected chain from
+   WrongChain, the app recovers to Connected). ReadOnly is unaffected. *)
 EvtChainChangedFromConnected(c) ==
     /\ state = "Connected"
     /\ c \in CHAINS
@@ -187,14 +201,30 @@ EvtChainChangedFromConnected(c) ==
             /\ addr' = addr
             /\ hasError' = FALSE
 
-(* ChainChanged from non-Connected state — no change (stutter).
-   This covers ReadOnly (stays ReadOnly) and other states. *)
+(* ChainChanged from WrongChain — manual switch in the wallet UI recovers
+   (mirrors the WrongChain branch of Wallet.update ChainChanged). *)
+EvtChainChangedFromWrongChain(c) ==
+    /\ state = "WrongChain"
+    /\ c \in CHAINS
+    /\ IF c = EXPECTED_CHAIN
+       THEN /\ state' = "Connected"
+            /\ chain' = c
+            /\ addr' = addr
+            /\ hasError' = FALSE
+       ELSE /\ state' = "WrongChain"  \* still wrong, chainId updated
+            /\ chain' = c
+            /\ addr' = addr
+            /\ hasError' = FALSE
+
+(* ChainChanged from any other state — no change (stutter).
+   This covers ReadOnly (stays ReadOnly), Disconnected, Connecting, Error. *)
 EvtChainChangedFromOther ==
-    /\ state /= "Connected"
+    /\ state \notin {"Connected", "WrongChain"}
     /\ UNCHANGED vars
 
 EvtChainChanged ==
     \/ \E c \in CHAINS : EvtChainChangedFromConnected(c)
+    \/ \E c \in CHAINS : EvtChainChangedFromWrongChain(c)
     \/ EvtChainChangedFromOther
 
 (* v2: SwitchChainOk — successful chain switch response from JS.
@@ -292,10 +322,19 @@ Fairness ==
 --------------------------------------------------------------------------
 (* Temporal properties *)
 
-(* NoDeadlock: Disconnected is always eventually reachable.
-   ReadOnly is a valid terminal state for read-only dApps, but
-   UserDisconnect can always return to Disconnected. *)
-NoDeadlock == []<>(state = "Disconnected")
+(* HONESTY NOTE: an earlier version claimed []<>(state = "Disconnected")
+   ("Disconnected always eventually reachable"), justified by "UserDisconnect
+   can always return to Disconnected". That is FALSE for the real machine:
+   ReadOnly has no disconnect path in the Elm code (WalletDisconnected keeps
+   ReadOnly sticky), so a run resting in ReadOnly never revisits Disconnected.
+   The truthful liveness claim is: every wallet SESSION eventually returns to
+   a resting state — Disconnected or ReadOnly. Holds under weak fairness on
+   UserDisconnect (the user is never starved of the disconnect button). *)
+SessionStates == {"Connecting", "Connected", "WrongChain", "Error"}
+
+EventuallyAtRest ==
+    [](state \in SessionStates =>
+        <>(state \in {"Disconnected", "ReadOnly"}))
 
 (* Once connected, the wallet stays connected or transitions through
    a known path — it never silently loses the address. *)
@@ -306,16 +345,25 @@ ConnectedStability ==
          \/ state' = "Disconnected"
          \/ state' = "Error")]_vars
 
-(* v2: ReadOnly is sticky — no message (except explicit user action or
-   a new WalletConnected) can take it out of ReadOnly. *)
+(* v2: ReadOnly is sticky — the ONLY exits are a WalletConnected announcement
+   (valid address -> Connected/WrongChain; malformed address -> Error, the
+   diagnostic path in Wallet.update). There is no ReadOnly -> Disconnected
+   path in the Elm code. *)
 ReadOnlySticky ==
     [][state = "ReadOnly" =>
         (state' = "ReadOnly"
          \/ state' = "Connected"   \* WalletConnected arrived
          \/ state' = "WrongChain"  \* WalletConnected, wrong chain
-         \/ state' = "Disconnected")]_vars   \* UserDisconnect
+         \/ state' = "Error")]_vars \* WalletConnected, malformed address
 
 (* v2: WrongChain can be resolved by SwitchChainOk. *)
+(* NOT CHECKED in the .cfg, deliberately: this property only holds if one
+   ASSUMES the user (or wallet) eventually performs a successful switch —
+   fairness on EvtSwitchChainOk / EvtChainChangedFromWrongChain. Asserting
+   that would encode "the user always eventually fixes their chain", which is
+   not a property of the library. What IS guaranteed (and checked) is that
+   recovery is *possible* from WrongChain via either path — see the
+   EvtSwitchChainOk and EvtChainChangedFromWrongChain actions. *)
 WrongChainCanResolve ==
     [](state = "WrongChain" => <>(state = "Connected"))
 

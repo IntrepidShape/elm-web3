@@ -2,6 +2,63 @@
 
 ## Unreleased
 
+### Fixed — three state-machine bugs found by the TLA↔code conformance audit
+
+Behavior fixes only — no exposed signature changes. Each was surfaced by
+auditing the TLA+ specs action-by-action against the Elm `update` functions
+(full audit: `proofs/TLA_CONFORMANCE.md`).
+
+- **`Web3.Wallet`: `ChainChanged` now recovers from `WrongChain`.** If the
+  user switched to the expected chain manually in the wallet UI (the EIP-1193
+  `chainChanged` event), the app stayed stuck in `WrongChain` forever — only
+  the app-initiated `switchChain` round-trip could recover. `WrongChain` +
+  `ChainChanged expected` → `Connected` (and updates `chainId` when landing on
+  another wrong chain).
+- **`Web3.Wallet`: `ReadOnlyMode` no longer tears down a live session.** A
+  stray `readOnly` announcement (init race) moved `Connected`/`WrongChain` to
+  `ReadOnly`, destroying the session. It is now ignored unless the state is
+  `Disconnected`/`Connecting`/`Error`.
+- **`Web3.Transaction`: confirmation counts are now actually monotonic.** The
+  module docs and TLA+ spec promised "confirmation counts only increase", but
+  `update` accepted any count — stale or reordered port messages could move
+  the counter backwards. `TxConfirmation` now requires `count ≥ 1` from
+  `Submitted` and `count >` current from `Confirming`; stale counts are
+  dropped. (The receipt hash still follows the message — a wallet speed-up
+  legitimately swaps in a replacement hash.)
+
+Regression tests added for all three (unit + a hostile-stream fuzz property
+for monotonicity).
+
+### Verification — TLA↔code conformance audit + EVM API coverage map
+
+- **`proofs/TLA_CONFORMANCE.md`** — new. Maps every Elm `update` case arm to
+  its TLA+ action for all three machines. The audit found 9 divergences: the
+  3 code bugs above, 5 places the spec modeled a different machine than the
+  code (TxReset scope, late rejection, `TxFailed` from `Idle`,
+  invalid-receipt path, phantom `ReadOnly → Disconnected` path), and 1 false
+  liveness claim.
+- **`WalletSpec.tla`**: `UserDisconnect` no longer models the nonexistent
+  `ReadOnly → Disconnected` path; `EvtChainChangedFromWrongChain` added;
+  `EvtReadOnlyMode` restricted to non-session states; the false
+  `NoDeadlock == []<>(Disconnected)` claim replaced by the true (and checked)
+  `EventuallyAtRest`; `ConnectedStability` and `ReadOnlySticky` are now
+  actually in the `.cfg` (the former was listed in COVERAGE while never being
+  evaluated); `ReadOnlyHasNoAddr` invariant now checked too.
+- **`TransactionSpec.tla`**: `UserRetry` extended to all terminals (matches
+  `TxReset`, removes the phantom deadlock); `GuardedTxRejectedLate` and
+  `GuardedTxConfirmedInvalid` added; `TxFailed` source set made faithful
+  (includes `Idle`); the vacuous `MonotonicConfirmations` invariant
+  (`confirmCount >= confirmCount`) rewritten as a real action property;
+  stale "UNGUARDED = faithful to the Elm code" comment corrected.
+- TLC deadlock checking re-enabled for Wallet + Transaction (no sinks
+  remain); still off for Sign (terminal sinks are intended, no reset exists).
+  All three specs re-verified green.
+- **`proofs/EVM_API_COVERAGE.md`** — new. Full EIP/JSON-RPC coverage matrix
+  with verdicts; wire-protocol integrity check (31 Elm command tags ↔ 31 port
+  handlers, 1:1); ranked genuine gaps (`eth_maxPriorityFeePerGas`,
+  custom-error revert decoding, `personal_ecRecover`, WS `newHeads`,
+  port F8: uncleared `watchBlockNumber` interval).
+
 ### Verification — TLA+ specs now actually model-checked by TLC (+ new SignSpec)
 
 - **`proofs/tla/SignSpec.tla`** + **`SignSpec.cfg`** — new TLA+ spec for the

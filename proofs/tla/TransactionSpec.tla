@@ -15,13 +15,19 @@
  *   TxFailed err           -> Failed err
  *   TxRejected             -> Rejected
  *
- * The Elm update function (src/Web3/Transaction.elm) guards most transitions:
- *   - Terminal states never transition out (isTerminal check at top of update)
+ * The Elm update function (src/Web3/Transaction.elm) guards every transition
+ * (conformance audited action-by-action — see proofs/TLA_CONFORMANCE.md):
+ *   - Terminal states never transition out on port messages (isTerminal check
+ *     at the top of update); TxReset resets ANY terminal state to Idle
  *   - TxSubmitted    only accepted from AwaitingSignature
- *   - TxConfirmation only accepted from Submitted or Confirming
+ *                    (invalid hash -> Failed)
+ *   - TxConfirmation only accepted from Submitted or Confirming, count must
+ *                    strictly increase (stale/lower counts dropped)
  *   - TxConfirmed    only accepted from Submitted or Confirming
- *   - TxFailed       accepted from any non-terminal state
- *   - TxRejected     only accepted from AwaitingSignature
+ *                    (invalid receipt hash -> Failed)
+ *   - TxFailed       accepted from any non-terminal state, INCLUDING Idle
+ *   - TxRejected     from AwaitingSignature -> Rejected;
+ *                    from Submitted/Confirming -> Failed (can't un-broadcast)
  *
  * This spec models two views for verification comparison:
  *   1. GuardedNext:    faithful to the current Elm code (matches above)
@@ -29,27 +35,20 @@
  *
  * All invariants hold under GuardedNext (verified by TLC).
  *
- * Invariants:
+ * Invariants (state):
  *   TypeOK                 — variables are well-typed
- *   TerminalIsTerminal     — no transitions from Confirmed/Failed/Rejected
+ *   TerminalIsTerminal     — no port message moves a terminal state; the only
+ *                            exit is the explicit TxReset to Idle
  *   SubmittedNeedsSignature — Submitted only reachable from AwaitingSignature
  *   ConfirmingHasHash      — Confirming state always carries a valid hash
- *   MonotonicConfirmations — confirmation count never decreases
+ * Properties (temporal/action):
+ *   EventuallyTerminal     — every pending tx eventually reaches terminal
+ *   MonotonicConfirmations — count strictly increases while Confirming
  *
  * To verify with TLC:
- *   1. Install the TLA+ Toolbox or tla2tools.jar
- *   2. Create a model with:
- *        - Spec: GuardedSpec  (or UnguardedSpec to see invariant violations)
- *        - Constants: TX_HASHES = {"0xaaa", "0xbbb"}
- *                     MAX_CONFIRMATIONS = 3
- *        - Invariants: TypeOK, TerminalIsTerminal,
- *                      SubmittedNeedsSignature, ConfirmingHasHash,
- *                      MonotonicConfirmations
- *        - Properties: EventuallyTerminal
- *   3. Run TLC. With the small constant sets above it terminates quickly.
- *
- *   Command line:
- *     java -jar tla2tools.jar -config TransactionSpec.cfg TransactionSpec.tla
+ *   java -jar tla2tools.jar -config TransactionSpec.cfg TransactionSpec.tla
+ *   (no -deadlock needed: TxReset from every terminal state means the state
+ *    graph has no sink states)
  *)
 
 EXTENDS Naturals, FiniteSets
@@ -111,14 +110,15 @@ ConfirmingHasHash ==
     /\ (state = "Submitted")  => txHash \in TX_HASHES
     /\ (state = "Confirmed")  => txHash \in TX_HASHES
 
-(* Confirmation count only increases (monotonic).
-   Checked only when staying in Confirming state. *)
+(* Confirmation count strictly increases while Confirming — an ACTION property
+   (mentions primed variables), so it lives under PROPERTIES in the .cfg, not
+   INVARIANTS. This replaces an earlier vacuous state-invariant formulation
+   (confirmCount >= confirmCount) that could never fail.
+   The Elm update enforces this since the monotonicity guard was added to
+   Web3.Transaction.updateNonTerminal (stale/lower counts are dropped). *)
 MonotonicConfirmations ==
-    (state = "Confirming" /\ prevState = "Confirming")
-        => confirmCount >= confirmCount  \* trivially true for same-step;
-                                          \* the real check is in the
-                                          \* guarded transition below which
-                                          \* only allows count' > confirmCount
+    [][(state = "Confirming" /\ state' = "Confirming")
+        => confirmCount' > confirmCount]_vars
 
 --------------------------------------------------------------------------
 (* Initial state *)
@@ -139,9 +139,11 @@ UserSend ==
     /\ confirmCount' = 0
     /\ prevState' = state
 
-(* User action: retry after failure (transitions Failed/Rejected -> Idle) *)
+(* User action: TxReset — from ANY terminal state (including Confirmed) back
+   to Idle. Mirrors Web3.Transaction.update TxReset, which resets whenever
+   isTerminal status; from non-terminal states it is a no-op. *)
 UserRetry ==
-    /\ state \in {"Failed", "Rejected"}
+    /\ state \in TerminalStates
     /\ state' = "Idle"
     /\ txHash' = NONE
     /\ confirmCount' = 0
@@ -186,20 +188,31 @@ GuardedTxConfirmed(h) ==
     /\ prevState' = state
 
 (* TxFailed: transaction failed (revert, out of gas, etc).
-   Can happen from AwaitingSignature, Submitted, or Confirming. *)
+   The Elm update accepts TxFailed from ANY non-terminal state — including
+   Idle (a stray failure message moves Idle to Failed; documented behavior,
+   see Web3.Transaction.update docs). Modeled faithfully. *)
 GuardedTxFailed ==
-    /\ state \in PendingStates
+    /\ state \in PendingStates \cup {"Idle"}
     /\ state' = "Failed"
     /\ txHash' = txHash       \* preserve hash if we had one
     /\ confirmCount' = 0
     /\ prevState' = state
 
-(* TxRejected: user rejected the signature request.
-   Only valid from AwaitingSignature. *)
+(* TxRejected: user rejected in the wallet.
+   From AwaitingSignature -> Rejected.
+   From Submitted/Confirming the Elm update maps rejection to
+   Failed "transaction rejected by wallet" (can't un-broadcast). *)
 GuardedTxRejected ==
     /\ state = "AwaitingSignature"
     /\ state' = "Rejected"
     /\ txHash' = NONE
+    /\ confirmCount' = 0
+    /\ prevState' = state
+
+GuardedTxRejectedLate ==
+    /\ state \in {"Submitted", "Confirming"}
+    /\ state' = "Failed"
+    /\ txHash' = txHash
     /\ confirmCount' = 0
     /\ prevState' = state
 
@@ -208,6 +221,15 @@ GuardedTxSubmittedInvalid ==
     /\ state = "AwaitingSignature"
     /\ state' = "Failed"
     /\ txHash' = NONE
+    /\ confirmCount' = 0
+    /\ prevState' = state
+
+(* TxConfirmed with an invalid receipt hash -> Failed
+   (Web3.Transaction.confirmReceipt Nothing branch). *)
+GuardedTxConfirmedInvalid ==
+    /\ state \in {"Submitted", "Confirming"}
+    /\ state' = "Failed"
+    /\ txHash' = txHash
     /\ confirmCount' = 0
     /\ prevState' = state
 
@@ -223,13 +245,16 @@ GuardedNext ==
         \/ \E n \in 1..MAX_CONFIRMATIONS : GuardedTxConfirmation(h, n)
     \/ GuardedTxFailed
     \/ GuardedTxRejected
+    \/ GuardedTxRejectedLate
     \/ GuardedTxSubmittedInvalid
+    \/ GuardedTxConfirmedInvalid
 
 --------------------------------------------------------------------------
 (* =====================================================================
-   UNGUARDED TRANSITIONS — faithful to the Elm code.
-   The update function does not check current state.
-   Running TLC with UnguardedSpec will show which invariants break.
+   UNGUARDED TRANSITIONS — permissive baseline (any message in any state).
+   This is NOT the Elm code (a stale comment once claimed it was): the Elm
+   update guards every transition, matching GuardedNext above. Running TLC
+   with UnguardedSpec shows which invariants the guards are load-bearing for.
    ===================================================================== *)
 
 (* TxSubmitted: any state -> Submitted (or Failed if invalid hash) *)

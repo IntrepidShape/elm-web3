@@ -2,6 +2,12 @@
 
 What is proved, what is not, and why.
 
+Companion documents:
+- `TLA_CONFORMANCE.md` — action-by-action audit that the TLA+ specs model the
+  actual Elm `update` functions (with divergence log).
+- `EVM_API_COVERAGE.md` — which EIPs / JSON-RPC methods the library covers,
+  which it deliberately does not, and the ranked remaining gaps.
+
 ---
 
 ## What is fully proved
@@ -36,41 +42,44 @@ What is proved, what is not, and why.
 ### TLA+ — state machine invariants (model-checked by TLC)
 
 Verified with TLC (tla2tools 1.7.4 / TLC 2.19, Java 21). Reproduce with
-`proofs/tla/check-tla.sh` (or `java -jar tla2tools.jar -deadlock -config
-<spec>.cfg <spec>.tla`). `-deadlock` is intentional — these machines have
-genuine terminal sink states (`Confirmed`, `Signed`, …).
+`proofs/tla/check-tla.sh`. TLC's deadlock check is ON for Wallet and
+Transaction (no sink states); it is disabled only for Sign, whose terminal
+states are genuine sinks (the Elm Sign machine has no reset).
+
+**Spec ↔ code conformance is audited action-by-action in
+`proofs/TLA_CONFORMANCE.md`** — every Elm `update` case arm is mapped to a TLA
+action. The 2026-07-02 audit found and resolved 9 divergences, including 3
+real Elm bugs (see the divergence log there and `CHANGELOG.md`).
 
 | Property | File |
 |----------|------|
 | Wallet: `Connected`/`WrongChain` always carry address+chain | `tla/WalletSpec.tla` |
-| Wallet: `Disconnected`/`Error` never carry address | `tla/WalletSpec.tla` |
-| Wallet: `Disconnected` is always eventually reachable (no deadlock) — under weak fairness on `UserDisconnect` | `tla/WalletSpec.tla` |
-| Wallet: `Connected` only transitions through the expected set of states | `tla/WalletSpec.tla` |
-| Transaction: no **port message** transitions a terminal state; the only exit is an explicit user retry to `Idle` | `tla/TransactionSpec.tla` |
+| Wallet: `Disconnected`/`Error`/`ReadOnly` never carry an address | `tla/WalletSpec.tla` |
+| Wallet: every session eventually returns to a resting state (`Disconnected` or `ReadOnly`), under weak fairness on `UserDisconnect` (`EventuallyAtRest`) | `tla/WalletSpec.tla` |
+| Wallet: `Connected` only exits to `WrongChain`/`Disconnected`/`Error` (`ConnectedStability`) | `tla/WalletSpec.tla` |
+| Wallet: `ReadOnly` only exits via a `WalletConnected` announcement (`ReadOnlySticky`) | `tla/WalletSpec.tla` |
+| Transaction: no **port message** transitions a terminal state; the only exit is the explicit `TxReset` to `Idle` (from any terminal, incl. `Confirmed`) | `tla/TransactionSpec.tla` |
 | Transaction: `Submitted` only reachable from `AwaitingSignature` | `tla/TransactionSpec.tla` |
 | Transaction: `Confirming` always carries a valid hash | `tla/TransactionSpec.tla` |
-| Transaction: confirmation count is monotonically non-decreasing | `tla/TransactionSpec.tla` |
+| Transaction: confirmation count strictly increases while `Confirming` (action property; also enforced in the Elm code) | `tla/TransactionSpec.tla` |
 | Transaction: every pending transaction eventually reaches a terminal state | `tla/TransactionSpec.tla` |
 | Sign: terminal states are absorbing (`TerminalAbsorbing`) | `tla/SignSpec.tla` |
 | Sign: every terminal state was entered from `SignPending` (`TerminalFromPending`) | `tla/SignSpec.tla` |
 | Sign: a message for a different correlation id never completes the pending sign (`NoCrossRequestConfusion`) | `tla/SignSpec.tla` |
 | Sign: `SignPending ⇒ ◇` terminal (liveness, under fairness) | `tla/SignSpec.tla` |
 
-> **Correction (this pass).** These specs were previously listed as
-> model-checked but had **never actually been run through TLC** — they did not
-> parse (a `----` divider before `EXTENDS`; and `[]`-of-bare-action temporal
-> properties). Fixing the syntax and running TLC surfaced three real defects,
-> now fixed and re-verified:
-> 1. `TerminalIsTerminal` was stated as "terminal states *never* transition
->    out", but the spec's own `UserRetry` resets `Failed`/`Rejected → Idle`.
->    Corrected to "no port message moves a terminal state; only a user retry to
->    `Idle` does."
-> 2. `WalletSpec` mixed integer chain ids with the string `NONE` sentinel, so
->    TLC aborted comparing `"NONE"` with `369`. Modelled chain ids as strings
->    (only equality is ever used).
-> 3. `NoDeadlock` (always-eventually-`Disconnected`) did **not** hold under
->    `WF(Next)` alone — the wallet could churn in `Connected` forever. It holds
->    once `UserDisconnect` is given weak fairness (its intended meaning).
+Not checked, deliberately: `WrongChainCanResolve` (would require assuming the
+user eventually fixes their chain — see the comment in `WalletSpec.tla`).
+
+> **Corrections log.** (1) These specs were once listed as model-checked but
+> had never parsed under TLC (fixed, then TLC surfaced real defects — see git
+> history). (2) A prior claim `[]<>(state = "Disconnected")` was **false** for
+> the real machine — `ReadOnly` has no disconnect path in the Elm code; the
+> claim was weakened to `EventuallyAtRest`, which is true and checked.
+> (3) `ConnectedStability` was previously listed here while absent from the
+> `.cfg` — i.e., claimed but never evaluated. It is now checked (and only
+> became true after the `ReadOnlyMode` session-teardown bug was fixed in the
+> Elm). Full details: `proofs/TLA_CONFORMANCE.md`.
 >
 > The `SignSpec` safety properties are *also* **Property-tested** in
 > `tests/SignFuzzTest.elm`.
@@ -160,8 +169,9 @@ lean RevertReason.lean
 # TLA+ (requires Java + tla2tools.jar; JDK 11+, verified on corretto-21)
 cd proofs/tla
 ./check-tla.sh                 # model-checks every *.tla with its *.cfg
-# or individually (note -deadlock: terminal sink states are intended):
-java -jar tla2tools.jar -deadlock -config WalletSpec.cfg      WalletSpec.tla
-java -jar tla2tools.jar -deadlock -config TransactionSpec.cfg TransactionSpec.tla
+# or individually (-deadlock ONLY for SignSpec — its terminal states are
+# genuine sinks; Wallet/Transaction get the full deadlock check):
+java -jar tla2tools.jar           -config WalletSpec.cfg      WalletSpec.tla
+java -jar tla2tools.jar           -config TransactionSpec.cfg TransactionSpec.tla
 java -jar tla2tools.jar -deadlock -config SignSpec.cfg        SignSpec.tla
 ```
