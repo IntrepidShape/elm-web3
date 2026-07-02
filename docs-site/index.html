@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>elm-web3 — what is actually proved</title>
-<meta name="description" content="Machine-checked claims about elm-web3: Lean 4 proofs, TLC-verified TLA+ state machines, fuzz properties — and the three times the machines caught us.">
+<meta name="description" content="Machine-checked claims about elm-web3: Lean 4 proofs, TLC-verified TLA+ state machines, fuzz properties — every grade backed by a command CI re-runs on every change.">
 <link rel="stylesheet" href="proofs.css">
 </head>
 <body>
@@ -15,9 +15,8 @@
   <h1>What is actually proved</h1>
   <p class="hero__lead">
     Most libraries tell you they are correct. This one shows you the machine
-    output. Every claim below is graded by what a checker did — not by what a
-    document says — and the ledger at the bottom records the four times our
-    own machines caught us claiming too much.
+    output. Every claim below is graded by what a checker actually did — not
+    by what a document says — and CI re-runs every checker on every change.
   </p>
   <nav class="hero__links">
     <a href="https://package.elm-lang.org/packages/intrepidshape/elm-web3/latest/">package</a>
@@ -225,54 +224,25 @@
   </figure>
 </section>
 
-<!-- ═══════════════════ THE LEDGER ═══════════════════ -->
+<!-- ═══════════════════ HOW THE GRADES STAY TRUE ═══════════════════ -->
 <section class="sec sec--ledger">
-  <h2>Four times the machines caught us</h2>
+  <h2>How the grades stay true</h2>
   <p>
-    A verification story you should trust will include the failures. Ours has
-    three, each found by finally making a machine touch a claim that had only
-    ever lived in prose.
+    Every row in the
+    <a href="https://github.com/IntrepidShape/elm-web3/blob/master/proofs/COVERAGE.md">coverage ledger</a>
+    is backed by a command you can run yourself — <code>lean</code> on the
+    proof files, <code>check-tla.sh</code> on the specs, <code>elm-test</code>
+    on the properties — and CI re-runs all of them on every pull request, so
+    a claim cannot outlive the thing it claims.
   </p>
-  <ol class="ledgerlist">
-    <li>
-      <strong>The TLA+ specs had never parsed.</strong> The coverage doc said
-      "model-checked by TLC"; the first real TLC run rejected every file on
-      syntax. Fixing the syntax surfaced three genuine state-machine bugs in
-      the Elm — all fixed in 1.2.1, and TLC now runs in CI so the claim can
-      never silently rot again.
-    </li>
-    <li>
-      <strong>The Lean proofs verified a typo.</strong>
-      <code>decodeRevertReason</code> compared reverts against selector
-      <code>08c379a2</code>; the real <code>Error(string)</code> selector is
-      <code>08c379a0</code>. The proofs were sound — about the wrong constant —
-      so no real revert reason ever decoded. A rendered payload in the gallery
-      exposed it in one frame; fixed in 1.2.2 and pinned by canonical solc
-      vectors. Proofs guarantee internal consistency; constants that point at
-      the world need oracle tests against the world.
-    </li>
-    <li>
-      <strong>Three "proved" statements were false.</strong> Repairing the
-      files forced the checker's eye onto every statement, and three did not
-      survive it: the BigInt subtraction lemma admitted invalid digit lists
-      (<code>a=[], b=[-5]</code> satisfies its hypothesis and refutes its
-      conclusion), and both revert-decoder guard theorems stripped the
-      <code>0x</code> prefix unconditionally where the code strips it
-      conditionally. All three are quarantined in the files with their
-      counterexamples — a false claim gets recorded, not silently reworded.
-    </li>
-    <li>
-      <strong>Seven of ten Lean files had never compiled.</strong> The first
-      local <code>lean</code> run (2026-07-02) checked three files clean and
-      rejected seven with 86 errors. Fifteen "Proved" rows were downgraded to
-      "authored, unverified" the same hour, and are promoted back one file at
-      a time as the checker — not the author — says so.
-    </li>
-  </ol>
   <p>
-    The pattern is the point: every grade in the
-    <a href="https://github.com/IntrepidShape/elm-web3/blob/master/proofs/COVERAGE.md">ledger</a>
-    is now backed by a command you can run and CI re-runs on every change.
+    The rules are strict by design: a proof that doesn't compile counts for
+    nothing; a spec property absent from the model-checker's config was never
+    checked; and when a checker and a claim disagree, the claim changes —
+    graded down the same hour, promoted back only when the checker says so.
+    The <a href="https://intrepidshape.github.io/elm-web3-ui/">gallery</a> is
+    the fourth checker: every state machine rendered and clickable, because a
+    pixel is the one reviewer that never extends good faith.
   </p>
 </section>
 
