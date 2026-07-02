@@ -6,6 +6,8 @@ module Web3.Fee exposing
     , getFeeHistory
     , encode
     , decoder
+    , getMaxPriorityFee
+    , maxPriorityFeeDecoder
     )
 
 {-| Gas price and fee history queries.
@@ -17,6 +19,7 @@ module Web3.Fee exposing
 @docs Cmd, Msg, FeeHistory
 @docs getGasPrice, getFeeHistory
 @docs encode, decoder
+@docs getMaxPriorityFee, maxPriorityFeeDecoder
 
 -}
 
@@ -110,5 +113,57 @@ feeHistoryDecoder =
         (D.field "baseFeePerGas" (D.list BigInt.decoder))
         (D.field "gasUsedRatio" (D.list D.float))
         (D.field "oldestBlock" D.int)
+
+
+{-| Request the current max priority fee per gas (`eth_maxPriorityFeePerGas`).
+The `id` is echoed back in the `maxPriorityFee` response.
+
+    web3Cmd (Fee.getMaxPriorityFee "priority-1")
+
+This is a standalone encoder that produces the port value directly — it is
+deliberately NOT a new variant of [`Cmd`](#Cmd). Adding a variant to an
+exposed custom type is a MAJOR change under Elm's enforced semver (every
+`case` expression over `Cmd` or `Msg` in consumer code would stop
+compiling), so this addition ships as a pair of standalone functions to
+stay MINOR-safe. Decode the response with
+[`maxPriorityFeeDecoder`](#maxPriorityFeeDecoder).
+
+-}
+getMaxPriorityFee : String -> E.Value
+getMaxPriorityFee id =
+    E.object
+        [ ( "tag", E.string "getMaxPriorityFee" )
+        , ( "id", E.string id )
+        ]
+
+
+{-| Decode the `maxPriorityFee` response from the JS port into
+`( id, wei )`.
+
+Standalone (not a [`Msg`](#Msg) variant) for the same additive-safety
+reason as [`getMaxPriorityFee`](#getMaxPriorityFee): extending `Msg`
+would be a MAJOR version bump.
+
+    case D.decodeValue Fee.maxPriorityFeeDecoder incoming of
+        Ok ( id, wei ) ->
+            -- wei : BigInt — suggested maxPriorityFeePerGas
+        Err _ ->
+            -- not a maxPriorityFee response
+
+-}
+maxPriorityFeeDecoder : D.Decoder ( String, BigInt )
+maxPriorityFeeDecoder =
+    D.field "tag" D.string
+        |> D.andThen
+            (\tag ->
+                case tag of
+                    "maxPriorityFee" ->
+                        D.map2 Tuple.pair
+                            (D.field "id" D.string)
+                            (D.field "wei" BigInt.decoder)
+
+                    _ ->
+                        D.fail ("Expected 'maxPriorityFee' tag, got: " ++ tag)
+            )
 
 

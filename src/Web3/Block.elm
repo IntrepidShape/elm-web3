@@ -8,6 +8,7 @@ module Web3.Block exposing
     , getBlockTransactionCount
     , encode
     , decoder
+    , unwatchBlockNumber
     )
 
 {-| Block number and block data queries.
@@ -28,6 +29,7 @@ module Web3.Block exposing
 @docs Cmd, Msg, Block
 @docs getBlockNumber, getBlock, watchBlockNumber, getBlockTransactionCount
 @docs encode, decoder
+@docs unwatchBlockNumber
 
 -}
 
@@ -94,6 +96,27 @@ watchBlockNumber id =
 getBlockTransactionCount : T.BlockNumber -> String -> Cmd
 getBlockTransactionCount blockNumber id =
     RequestBlockTxCount blockNumber id
+
+
+{-| Stop a block-number watcher started with [`watchBlockNumber`](#watchBlockNumber).
+The `id` must match the one passed to `watchBlockNumber`. Clears the JS-side
+polling interval and/or the WebSocket `newHeads` subscription.
+
+    web3Cmd (Block.unwatchBlockNumber "block-watch")
+
+This is a standalone encoder producing the port value directly — it is
+deliberately NOT a new variant of [`Cmd`](#Cmd), because adding a variant
+to an exposed custom type is a MAJOR change under Elm's enforced semver
+(consumer `case` expressions over `Cmd` would stop compiling). A
+standalone function keeps this addition MINOR-safe.
+
+-}
+unwatchBlockNumber : String -> E.Value
+unwatchBlockNumber id =
+    E.object
+        [ ( "tag", E.string "unwatchBlockNumber" )
+        , ( "id", E.string id )
+        ]
 
 
 {-| Encode a Cmd for the JS port.

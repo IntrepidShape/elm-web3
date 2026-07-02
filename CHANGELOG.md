@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.3.0 — 2026-07-02
+
+### Added
+
+- **`Fee.getMaxPriorityFee` / `Fee.maxPriorityFeeDecoder`** —
+  `eth_maxPriorityFeePerGas`, completing the EIP-1559 fee-read triad. Shipped
+  as a standalone encode/decode pair rather than new `Fee.Msg` variants
+  (extending an exposed custom type breaks consumers' case expressions —
+  that's a MAJOR; this is additive).
+- **`Sign.verify` / `Sign.recoveredDecoder`** — `personal_ecRecover`:
+  client-side signature verification for login flows.
+- **`Block.unwatchBlockNumber`** — stops a block-number watch.
+
+### Fixed
+
+- **Port F8**: `watchBlockNumber`'s poll interval was never cleared and
+  stacked on re-issue. Pollers are now keyed by correlation id, replaced on
+  re-issue, and cleared by `unwatchBlockNumber`. `js/elm-web3-ports.js`
+  rebuilt (bun).
+
+Wire-pair tests added for every new encoder/decoder (455 tests green).
+
+
 ## 1.2.3 — 2026-07-02
 
 ### Verification — all ten Lean files now machine-check (first time ever)

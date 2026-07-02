@@ -52,7 +52,7 @@ Legend: ✅ covered · 🟡 partial/via-port-only · ❌ not covered (with verdi
 | `eth_getLogs` | ✅ | `Contract.Event.getLogs` |
 | `eth_gasPrice` | ✅ | `Fee.getGasPrice` |
 | `eth_feeHistory` | ✅ | `Fee.getFeeHistory` |
-| `eth_maxPriorityFeePerGas` | ❌ | **gap** — the natural EIP-1559 companion to `feeHistory`; cheap to add (port case + `Fee` variant) |
+| `eth_maxPriorityFeePerGas` | ✅ | `Fee.getMaxPriorityFee` / `maxPriorityFeeDecoder` (1.3.0; standalone pair — extending `Fee.Msg` would be MAJOR) |
 | `eth_chainId` / `eth_accounts` | ✅ | used internally by the port |
 | `eth_getProof` (EIP-1186) | ❌ | **skip** — light-client/bridge tooling, not dapp UI |
 | `eth_createAccessList` (EIP-2930) | ❌ | **skip** — gas micro-optimization, wallet's job |
@@ -67,7 +67,7 @@ Legend: ✅ covered · 🟡 partial/via-port-only · ❌ not covered (with verdi
 | `eth_sendTransaction` | ✅ | `Contract.Send` `writeCall`/`payableCall` (+`Raw` variants); `deploy` = sendTransaction without `to` |
 | `eth_sendRawTransaction` | ✅ | `sendRawTransaction` port command |
 | `eth_signTransaction` (sign, don't broadcast) | ❌ | **skip** — wallets barely support it; raw-tx flows use sendRaw |
-| `personal_ecRecover` | ❌ | **gap (small)** — verify a signature client-side; useful for login flows |
+| `personal_ecRecover` | ✅ | `Sign.verify` / `recoveredDecoder` (1.3.0) |
 | Fee fields on writes | 🟡 | `WriteCall` carries `value` + `gasLimit` only — **no `maxFeePerGas`/`maxPriorityFeePerGas`/`nonce` overrides.** Deliberate: the wallet owns fee choice (and overrides dapp values anyway). Documented posture, revisit only on real demand |
 
 ## 4. Subscriptions / streaming
@@ -102,8 +102,9 @@ Legend: ✅ covered · 🟡 partial/via-port-only · ❌ not covered (with verdi
   decoder. Not a gap, but the reason there is no single total inbound decoder.
 - Port-layer behaviors (exception containment, error-tag consistency) are
   covered by `JS_PORT_PROOF.md`, including its open findings (F1–F7).
-  One more for that list: `watchBlockNumber`'s `setInterval` is never
-  cleared — a long-lived page that re-issues it leaks pollers (**F8**).
+  F8 (`watchBlockNumber` interval leak) was fixed in 1.3.0: pollers are
+  keyed by id, replaced on re-issue, and `Block.unwatchBlockNumber` clears
+  them. The F1–F7 re-audit against the current port remains open.
 
 ---
 
@@ -115,9 +116,8 @@ routine reads, both write paths, log streaming, and the full ABI/BigInt/Units
 stack with formal backing. It is **not** an exhaustive JSON-RPC binding — by
 design. The ranked genuine gaps:
 
-1. `eth_maxPriorityFeePerGas` (completes the EIP-1559 fee-read triad)
-2. Custom-error revert decoding (typed solc errors)
-3. `personal_ecRecover` (client-side signature verification)
-4. WS `newHeads` for `watchBlockNumber` (replace 4s poll)
-5. Port F8: uncleared `watchBlockNumber` interval
-6. EIP-5792 batched calls (watch adoption before building)
+1. Custom-error revert decoding (typed solc errors)
+2. WS `newHeads` for `watchBlockNumber` (replace 4s poll)
+3. Port F1–F7 re-audit against the current bridge
+4. EIP-5792 batched calls (watch adoption before building; activation
+   criterion: two major wallets shipping `wallet_sendCalls`)

@@ -11,6 +11,8 @@ module Web3.Sign exposing
     , signUpdate
     , isSignTerminal
     , startSign
+    , verify
+    , recoveredDecoder
     )
 
 {-| EIP-712 typed data signing and EIP-191 personal signing.
@@ -74,6 +76,7 @@ Use the `SignState` machine to track the lifecycle of a single sign request.
 @docs typedData, encode, personalSign, signatureDecoder
 @docs SignState, SignMsg
 @docs startSign, signUpdate, isSignTerminal
+@docs verify, recoveredDecoder
 
 -}
 
@@ -291,6 +294,65 @@ signatureDecoder =
 
                     _ ->
                         D.fail ("Expected 'signed' tag, got: " ++ tag)
+            )
+
+
+{-| Verify an EIP-191 `personal_sign` signature by recovering the signer
+address (`personal_ecRecover`).
+
+    web3Cmd
+        (Sign.verify
+            { id = "login-verify-1"
+            , message = "Sign in to MyDapp"
+            , signature = sig
+            }
+        )
+
+The recovered address arrives on the `recovered` tag — decode it with
+[`recoveredDecoder`](#recoveredDecoder) and compare it against the address
+that claims to have signed. Failures arrive on the standard `failed` tag.
+
+This is a standalone encoder returning the port value directly (like
+[`personalSign`](#personalSign)) rather than a new `Cmd`/`Msg` variant —
+extending an exposed custom type is a MAJOR change under Elm's enforced
+semver, so additive functions keep this MINOR-safe.
+
+-}
+verify : { id : String, message : String, signature : String } -> E.Value
+verify { id, message, signature } =
+    E.object
+        [ ( "tag", E.string "ecRecover" )
+        , ( "id", E.string id )
+        , ( "message", E.string message )
+        , ( "signature", E.string signature )
+        ]
+
+
+{-| Decode the `recovered` response from a [`verify`](#verify) request.
+
+    case D.decodeValue Sign.recoveredDecoder incoming of
+        Ok { id, address } ->
+            -- address : String — the 0x-prefixed recovered signer
+        Err _ ->
+            -- not a recovered response
+
+Standalone (not a `SignMsg` variant) for the same additive-safety reason
+as [`verify`](#verify).
+
+-}
+recoveredDecoder : D.Decoder { id : String, address : String }
+recoveredDecoder =
+    D.field "tag" D.string
+        |> D.andThen
+            (\tag ->
+                case tag of
+                    "recovered" ->
+                        D.map2 (\id address -> { id = id, address = address })
+                            (D.field "id" D.string)
+                            (D.field "address" D.string)
+
+                    _ ->
+                        D.fail ("Expected 'recovered' tag, got: " ++ tag)
             )
 
 

@@ -338,6 +338,9 @@ export function setupPorts(app, options = {}) {
   let _wsEndpointIdx = 0
   const _wsPending = new Map()
   const _subscriptions = new Map()
+  // Block-number pollers keyed by correlation id — cleared on re-issue and
+  // via 'unwatchBlockNumber' (F8: previously these intervals leaked).
+  const _blockPollers = new Map()
 
   function _wsCall(method, params) {
     if (!_ws || _ws.readyState !== 1) return Promise.reject(new Error('ws not open'))
@@ -672,6 +675,17 @@ export function setupPorts(app, options = {}) {
           break
         }
 
+        // --- EIP-191 signature verification (personal_ecRecover) ---
+        case 'ecRecover': {
+          if (!window.ethereum) throw new Error('No wallet found')
+          const address = await window.ethereum.request({
+            method: 'personal_ecRecover',
+            params: [cmd.message, cmd.signature],
+          })
+          app.ports.web3Sub.send({ tag: 'recovered', id: cmd.id, address })
+          break
+        }
+
         // --- EIP-712 typed signing ---
         case 'signTypedData': {
           if (!window.ethereum) throw new Error('No wallet found')
@@ -770,8 +784,19 @@ export function setupPorts(app, options = {}) {
               app.ports.web3Sub.send({ tag: 'blockNumber', id: cmd.id, number: parseInt(hex, 16) })
             } catch (_) {}
           }
+          // Re-issuing under the same id replaces the poller instead of
+          // stacking a second one (F8).
+          if (_blockPollers.has(cmd.id)) clearInterval(_blockPollers.get(cmd.id))
           pollBlock()
-          setInterval(pollBlock, 4000)
+          _blockPollers.set(cmd.id, setInterval(pollBlock, 4000))
+          break
+        }
+
+        case 'unwatchBlockNumber': {
+          if (_blockPollers.has(cmd.id)) {
+            clearInterval(_blockPollers.get(cmd.id))
+            _blockPollers.delete(cmd.id)
+          }
           break
         }
 
@@ -800,6 +825,13 @@ export function setupPorts(app, options = {}) {
         case 'getGasPrice': {
           const hex = await _rpcRequest('eth_gasPrice', [])
           app.ports.web3Sub.send({ tag: 'gasPrice', id: cmd.id, wei: BigInt(hex).toString() })
+          break
+        }
+
+        // --- EIP-1559 tip estimate ---
+        case 'getMaxPriorityFee': {
+          const hex = await _rpcRequest('eth_maxPriorityFeePerGas', [])
+          app.ports.web3Sub.send({ tag: 'maxPriorityFee', id: cmd.id, wei: BigInt(hex).toString() })
           break
         }
 
