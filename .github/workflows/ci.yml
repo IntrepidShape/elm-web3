@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  elm:
+    name: Build + tests (elm)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install elm 0.19.1
+        run: |
+          curl -sSL https://github.com/elm/compiler/releases/download/0.19.1/binary-for-linux-64-bit.gz \
+            | gunzip > /usr/local/bin/elm
+          chmod +x /usr/local/bin/elm
+          elm --version
+
+      - name: Cache ELM_HOME
+        uses: actions/cache@v4
+        with:
+          path: ~/.elm
+          key: elm-home-${{ hashFiles('elm.json') }}
+
+      # elm-test is a Node CLI; Bun cannot currently drive it.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Typecheck library
+        run: elm make src/Web3.elm --output=/dev/null
+
+      - name: Verify docs build
+        run: elm make --docs=/tmp/docs.json
+
+      - name: Run test suite
+        run: npx --yes elm-test --compiler /usr/local/bin/elm
+
+  tlc:
+    name: Model-check TLA+ specs (TLC)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Fetch tla2tools
+        run: |
+          mkdir -p "$HOME/.local/share/tla"
+          curl -sSL -o "$HOME/.local/share/tla/tla2tools.jar" \
+            https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar
+
+      - name: Run TLC on every spec
+        run: ./proofs/tla/check-tla.sh
