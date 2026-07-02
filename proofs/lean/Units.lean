@@ -34,6 +34,16 @@ def trimTrailingZeros (s : String) : String :=
 -- 2. PROOF: dropWhileZero removes all leading zeros from a reversed list
 -- ============================================================================
 
+/-- Unfolding lemma: dropWhileZero drops a '0' head. -/
+theorem dropWhileZero_cons_zero (rest : List Char) :
+    dropWhileZero ('0' :: rest) = dropWhileZero rest := rfl
+
+/-- Unfolding lemma: dropWhileZero is the identity on a non-'0' head. -/
+theorem dropWhileZero_cons_ne {c : Char} (rest : List Char) (h : c ≠ '0') :
+    dropWhileZero (c :: rest) = c :: rest := by
+  unfold dropWhileZero
+  split <;> simp_all
+
 /-- After dropWhileZero, the first element (if any) is not '0'. -/
 theorem dropWhileZero_head_ne_zero (cs : List Char) :
     match dropWhileZero cs with
@@ -42,14 +52,12 @@ theorem dropWhileZero_head_ne_zero (cs : List Char) :
   induction cs with
   | nil => trivial
   | cons c cs ih =>
-    simp only [dropWhileZero]
-    split
-    · exact ih
-    · rename_i hne
-      -- c ≠ '0', and the result is c :: cs
-      simp only []
-      intro heq
-      exact hne heq
+    by_cases hc : c = '0'
+    · subst hc
+      rw [dropWhileZero_cons_zero]
+      exact ih
+    · rw [dropWhileZero_cons_ne cs hc]
+      exact hc
 
 /-- dropWhileZero is idempotent. -/
 theorem dropWhileZero_idempotent (cs : List Char) :
@@ -57,12 +65,12 @@ theorem dropWhileZero_idempotent (cs : List Char) :
   induction cs with
   | nil => rfl
   | cons c cs ih =>
-    simp only [dropWhileZero]
-    split
-    · exact ih
-    · -- c ≠ '0': result is c :: cs, and dropWhileZero (c :: cs) = c :: cs
-      rename_i hne
-      simp [dropWhileZero, hne]
+    by_cases hc : c = '0'
+    · subst hc
+      rw [dropWhileZero_cons_zero]
+      exact ih
+    · rw [dropWhileZero_cons_ne cs hc]
+      exact dropWhileZero_cons_ne cs hc
 
 -- ============================================================================
 -- 3. PROOF: trimTrailingZeros removes all trailing zeros
@@ -79,15 +87,13 @@ theorem trimTrailingZeros_no_trailing_zero (s : String) :
   unfold trimTrailingZeros hasTrailingZero
   rw [String.toList_ofList, List.reverse_reverse]
   -- Now we need: dropWhileZero (s.toList.reverse)'s head ≠ '0'
-  set cs := s.toList.reverse
-  induction cs with
-  | nil => simp [dropWhileZero]
-  | cons c rest ih =>
-    simp only [dropWhileZero]
-    split
-    · exact ih
-    · rename_i hne
-      simp [hne]
+  have h := dropWhileZero_head_ne_zero s.toList.reverse
+  cases hd : dropWhileZero s.toList.reverse with
+  | nil => rfl
+  | cons c rest =>
+    rw [hd] at h
+    -- h : c ≠ '0'
+    split <;> simp_all
 
 /-- trimTrailingZeros is idempotent. -/
 theorem trimTrailingZeros_idempotent (s : String) :
@@ -104,18 +110,20 @@ theorem trimTrailingZeros_idempotent (s : String) :
 theorem trimTrailingZeros_id_of_no_trailing_zero (s : String)
     (h : hasTrailingZero s = false) : trimTrailingZeros s = s := by
   unfold trimTrailingZeros hasTrailingZero at *
-  set cs := s.toList
-  -- h : (match cs.reverse with | '0' :: _ => true | _ => false) = false
-  -- Need: String.ofList (cs.reverse (dropWhileZero cs.reverse)) = s
-  suffices heq : dropWhileZero cs.reverse = cs.reverse by
+  -- h : (match s.toList.reverse with | '0' :: _ => true | _ => false) = false
+  -- Need: String.ofList (dropWhileZero s.toList.reverse).reverse = s
+  suffices heq : dropWhileZero s.toList.reverse = s.toList.reverse by
     rw [heq, List.reverse_reverse, String.ofList_toList]
   -- Show dropWhileZero is identity when head ≠ '0'
-  cases hcs : cs.reverse with
-  | nil => simp [dropWhileZero]
+  cases hcs : s.toList.reverse with
+  | nil => rfl
   | cons c rest =>
     rw [hcs] at h
-    simp at h
-    simp [dropWhileZero, h]
+    have hcne : c ≠ '0' := by
+      intro heq0
+      subst heq0
+      exact Bool.noConfusion h
+    exact dropWhileZero_cons_ne rest hcne
 
 -- ============================================================================
 -- 5. PROOF: parseUnits rejects pathological inputs
@@ -128,7 +136,7 @@ def parseUnits_rejects_empty (decimals : Int) : True := trivial
 theorem parseUnits_empty (decimals : Int) (s : String) (h : s = "") :
     -- The Elm function returns Nothing for empty s.
     -- We model this as: the first branch produces None.
-    (s = "" → @Option.none String) h = none := rfl
+    (fun _ : s = "" => (none : Option String)) h = none := rfl
 
 -- In Elm: `else if String.startsWith "-" s then Nothing`
 theorem parseUnits_negative_rejected (s : String)
@@ -140,8 +148,18 @@ theorem parseUnits_negative_rejected (s : String)
 theorem parseUnits_multiple_dots_rejected :
     -- String.split "." "1.2.3" = ["1", "2", "3"] which hits the default branch
     ("1.2.3".splitOn "." : List String) ≠ ["1.2.3"] ∧
-    ("1.2.3".splitOn "." : List String) ≠ [_, _] := by
-  decide
+    ∀ (a b : String), ("1.2.3".splitOn "." : List String) ≠ [a, b] := by
+  have hsplit : "1.2.3".splitOn "." = ["1", "2", "3"] := by
+    -- `String.splitOnAux` is well-founded recursion (no kernel reduction),
+    -- so evaluate it by repeated equation unfolding instead of `decide`.
+    unfold String.splitOn
+    simp
+    repeat first
+      | rfl
+      | (unfold String.splitOnAux; simp)
+  refine ⟨by simp [hsplit], fun a b h => ?_⟩
+  rw [hsplit] at h
+  simp at h
 
 -- ============================================================================
 -- 6. PROOF: formatUnits short-circuit for decimals ≤ 0
@@ -150,12 +168,14 @@ theorem parseUnits_multiple_dots_rejected :
 /-- bigPow model: 10^n for n > 0. -/
 def bigPow : Int → Int
   | n => if n ≤ 0 then 1 else 10 * bigPow (n - 1)
-termination_by n => if n ≤ 0 then 0 else n.toNat
+termination_by n => n.toNat
+decreasing_by omega
 
 theorem bigPow_pos (n : Int) : bigPow n > 0 := by
   unfold bigPow
-  split_ifs with h
-  · norm_num
+  show (if n ≤ 0 then 1 else 10 * bigPow (n - 1)) > 0
+  split
+  · omega
   · -- inductive step: 10 * bigPow (n-1) > 0
     sorry  -- needs well-founded induction ~5 lines
 

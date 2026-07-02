@@ -66,13 +66,20 @@ inductive DecodeResult (α : Type) where
   | ok  : α → DecodeResult α
   | err : String → DecodeResult α
 
+/-- Abstract JSON value type. Carried by `String` so the roundtrip axiom
+    below has a consistent model; the codec functions are `opaque`, so no
+    equations beyond the axiom are available. -/
+def JsonValue : Type := String
+
+/-- Abstract `E.string` (opaque; specified only by `jsonString_roundtrip`). -/
+opaque encodeString : String → JsonValue := fun s => s
+
+/-- Abstract `D.string` (opaque; specified only by `jsonString_roundtrip`). -/
+opaque decodeString_string : JsonValue → DecodeResult String := fun s => .ok s
+
 /-- The string codec axiom: decoding an encoded string gives back the original. -/
 axiom jsonString_roundtrip (s : String) :
     (decodeString_string (encodeString s)) = DecodeResult.ok s
-  where
-    encodeString : String → JsonValue := fun _ => JsonValue.mk  -- abstract
-    decodeString_string : JsonValue → DecodeResult String := fun _ => .err ""
-    structure JsonValue where mk : Unit
 
 -- In the actual proof we work with the abstract functor and rely on this axiom.
 
@@ -100,9 +107,7 @@ theorem mkBytes32_none_iff (s : String) :
   unfold mkBytes32
   constructor
   · intro h; split at h <;> simp_all
-  · intro h; simp [dite]; split
-    · exact absurd ‹_› h
-    · rfl
+  · intro h; exact dif_neg h
 
 /-- **Full characterization**. -/
 theorem mkBytes32_some_iff (s : String) (b : Bytes32) :
@@ -111,19 +116,16 @@ theorem mkBytes32_some_iff (s : String) (b : Bytes32) :
   constructor
   · intro heq
     split at heq
-    · case isTrue hv =>
-      simp at heq
-      exact ⟨hv, congrArg Bytes32.val heq⟩
+    · rename_i hv
+      injection heq with h
+      subst h
+      exact ⟨hv, rfl⟩
     · simp at heq
   · intro ⟨hv, hval⟩
-    split
-    · case isTrue hv' =>
-      congr 1
-      cases b with | mk av ap =>
-      simp only [Bytes32.val] at hval
-      subst hval
-      exact congrArg (Bytes32.mk s) (proof_irrel hv' ap)
-    · exact absurd hv ‹_›
+    obtain ⟨av, ap⟩ := b
+    have hval' : av = s := hval
+    subst hval'
+    exact dif_pos hv
 
 /-- **Injectivity**: two Bytes32 values with equal underlying strings are equal. -/
 theorem bytes32_injective : Function.Injective Bytes32.val := by
@@ -136,11 +138,7 @@ theorem mkBytes32_roundtrip (b : Bytes32) :
     mkBytes32 b.val = some b := by
   obtain ⟨s, hs⟩ := b
   unfold mkBytes32
-  split
-  · case isTrue hv =>
-    congr 1
-    exact congrArg (Bytes32.mk s) (proof_irrel hv hs)
-  · exact absurd hs ‹_›
+  exact dif_pos hs
 
 -- ============================================================================
 -- 3. uint256 codec round-trip
@@ -167,6 +165,13 @@ theorem mkBytes32_roundtrip (b : Bytes32) :
   Proof: By `fromString_toString_roundtrip` (BigInt.lean P14) and
          `jsonString_roundtrip` (JSON axiom above).
 -/
+def BigIntT : Type := Unit  -- placeholder for BigInt type
+
+namespace BigInt
+  def fromString : String → Option BigIntT := fun _ => none
+  def toString   : BigIntT → String         := fun _ => ""
+end BigInt
+
 theorem uint256_codec_roundtrip :
     ∀ n : BigIntT,
       BigInt.fromString (BigInt.toString n) = some n := by
@@ -176,12 +181,6 @@ theorem uint256_codec_roundtrip :
     The JSON wrapping (E.string / D.string) is handled by `jsonString_roundtrip`.
     No additional proof content needed beyond P14.
   -/
-  where
-    BigIntT : Type := Unit  -- placeholder for BigInt type
-    namespace BigInt
-      def fromString : String → Option BigIntT := fun _ => none
-      def toString   : BigIntT → String         := fun _ => ""
-    end BigInt
 
 -- ============================================================================
 -- 4. address codec round-trip
@@ -215,15 +214,20 @@ theorem address_codec_roundtrip (a : AddressT) :
     mkAddress (addressToString a) = some a := by
   obtain ⟨s, hs⟩ := a
   unfold addressToString mkAddress
-  split
-  · case isTrue hv =>
-    congr 1
-    exact congrArg (AddressT.mk s) (proof_irrel hv hs)
-  · exact absurd hs ‹_›
+  exact dif_pos hs
 
 -- ============================================================================
 -- 5. bool round-trip (trivial)
 -- ============================================================================
+
+/-- Abstract JSON boolean value type (same treatment as `JsonValue`). -/
+def JsonValue' : Type := Bool
+
+/-- Abstract `E.bool` (opaque; specified only by `bool_codec_roundtrip`). -/
+opaque encodeBool : Bool → JsonValue' := fun b => b
+
+/-- Abstract `D.bool` (opaque; specified only by `bool_codec_roundtrip`). -/
+opaque decodeBool : JsonValue' → DecodeResult Bool := fun b => .ok b
 
 /--
   **bool round-trip**: `D.bool (E.bool b) = Ok b`
@@ -234,10 +238,6 @@ theorem address_codec_roundtrip (a : AddressT) :
 -/
 axiom bool_codec_roundtrip (b : Bool) :
     decodeBool (encodeBool b) = DecodeResult.ok b
-  where
-    encodeBool : Bool → JsonValue' := fun _ => JsonValue'.mk
-    decodeBool  : JsonValue' → DecodeResult Bool := fun _ => .err ""
-    structure JsonValue' where mk : Unit
 
 -- ============================================================================
 -- 6. string round-trip (trivial)
@@ -249,7 +249,8 @@ axiom bool_codec_roundtrip (b : Bool) :
   Follows directly from `jsonString_roundtrip`.
 -/
 theorem string_codec_roundtrip (s : String) :
-    ∀ encode decode, decode (encode s) = DecodeResult.ok s →
+    ∀ (encode : String → JsonValue) (decode : JsonValue → DecodeResult String),
+      decode (encode s) = DecodeResult.ok s →
       decode (encode s) = DecodeResult.ok s :=
   fun _ _ h => h
 
