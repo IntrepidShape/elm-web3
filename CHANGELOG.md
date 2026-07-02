@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 1.2.1 — 2026-07-02
+
+> Registry note: the 1.1.0 and 1.2.0 tags below existed in git but had never
+> been run through `elm publish` — the registry only carried 1.0.0. All three
+> versions (1.1.0, 1.2.0, 1.2.1) were published together on 2026-07-02.
 
 ### Fixed — three state-machine bugs found by the TLA↔code conformance audit
 
