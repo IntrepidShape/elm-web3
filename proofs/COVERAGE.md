@@ -12,7 +12,18 @@ Companion documents:
 
 ## What is fully proved
 
-### Lean 4 — type soundness
+### Lean 4 — machine-check status (Lean 4.31.0, pinned in `lean/lean-toolchain`)
+
+> **Correction (2026-07-02).** The first local Lean run ever performed on this
+> repo found that only THREE of the ten proof files actually check:
+> `Address.lean`, `TxHash.lean`, `HexString.lean`. The other seven were
+> authored but never machine-checked in any environment (86 errors under the
+> pinned toolchain — stdlib drift and tactic-state mismatches). Their rows
+> have been downgraded from **Proved** to **Authored — does not currently
+> check (under repair)** below, exactly as the prime directive requires.
+> Rows are promoted back one file at a time as `lean <file>` exits clean.
+
+#### Proved — `lean` exits 0 on the pinned toolchain
 
 | Property | File | Theorems |
 |----------|------|----------|
@@ -23,6 +34,18 @@ Companion documents:
 | Same four properties for `TxHash` (length=66, body=64) | `lean/TxHash.lean` | parallel theorems |
 | `HexString` soundness, completeness, injectivity, roundtrip | `lean/HexString.lean` | `mkHexString_sound`, `mkHexString_none_iff_invalid`, `mkHexString_some_iff`, `hexStringToString_injective`, `mkHexString_hexStringToString_roundtrip` |
 | `HexString` structural invariants: starts "0x", hex body, non-empty, length ≥ 2 | `lean/HexString.lean` | `hexString_startsWith0x`, `hexString_hex_body`, `hexString_nonempty`, `hexString_length_ge_2` |
+
+
+#### Authored — does NOT currently check (under repair; NOT Proved)
+
+These statements are written and may well be true (several have Property-tested
+backstops), but `lean` reports errors on the pinned toolchain, so per the
+grading rules they are **Unverified** until repaired. Files:
+`WalletCodec.lean` (6 errors), `AbiCodec.lean` (12), `SignState.lean` (10),
+`TxCmd.lean` (3), `Units.lean` (12), `BigInt.lean` (20), `RevertReason.lean` (25).
+
+| Statement (as originally claimed) | File | Named results |
+|----------|------|----------|
 | `bytes32` decoder: soundness, completeness, injectivity, roundtrip | `lean/AbiCodec.lean` | `mkBytes32_sound`, `mkBytes32_none_iff`, `mkBytes32_some_iff`, `bytes32_injective`, `mkBytes32_roundtrip` |
 | `address` ABI codec roundtrip | `lean/AbiCodec.lean` | `address_codec_roundtrip` |
 | `WalletCmd` encode/decode is an isomorphism | `lean/WalletCodec.lean` | `decode_encode_roundtrip`, `encode_injective`, `encode_decode_partial_inverse` |
@@ -167,7 +190,7 @@ verified evidence, though weaker than a proof.
 ## How to check the proofs
 
 ```bash
-# Lean 4
+# Lean 4 (toolchain pinned in proofs/lean/lean-toolchain; install via elan)
 cd proofs/lean
 lean Address.lean        # no output = clean
 lean TxHash.lean
