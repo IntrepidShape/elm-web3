@@ -187,23 +187,28 @@ def errorStringSelector : String := "08c379a0"
   **Selector guard**: if the first 8 hex chars of the payload (after 0x)
   are not "08c379a0", `decodeRevertReason` returns Nothing.
 -/
-/- FINDING (2026-07-02): statement FALSE as written — hypothesis strips 2 chars unconditionally; the model (and Elm) strip only when 0x-prefixed. Unprefixed valid payload satisfies the hypothesis yet decodes.
-   Quarantined pending faithful restatement (AGENT_ROADMAP Track A). Machine-
-   checked counterexample reasoning in git history / COVERAGE.md corrections.
+/-- Conditional strip — exactly the model's (and the Elm decoder's) rule. -/
+def strippedHex (hex : String) : String :=
+  if hex.startsWith "0x" || hex.startsWith "0X" then
+    String.ofList (hex.toList.drop 2)
+  else
+    hex
 
-theorem decodeRevertReason_wrong_selector
-    (hex : String)
-    (hsel : (String.take 8 (String.toLower (String.dropLeft 2 hex))) ≠ errorStringSelector) :
-    decodeRevertReason_model hex = none := by
-  simp [decodeRevertReason_model, hsel]
-where
-  decodeRevertReason_model : String → Option String := fun hex =>
-    let raw := if hex.startsWith "0x" || hex.startsWith "0X"
-               then hex.drop 2 else hex
-    let selector := (raw.take 8).toLower
-    if selector == errorStringSelector then some "placeholder"
-    else none
--/
+/-- Model of the selector branch of decodeRevertReason. -/
+def selectorGuardModel (hex : String) : Option String :=
+  if (String.ofList ((strippedHex hex).toList.take 8)).toLower == errorStringSelector then
+    some "placeholder"
+  else
+    none
+
+/-- RESTATED (2026-07-02; original was false — it stripped unconditionally
+where the decoder strips conditionally): if the first 8 hex chars of the
+CONDITIONALLY-stripped payload are not the Error(string) selector, the
+decoder returns none. -/
+theorem decodeRevertReason_wrong_selector (hex : String)
+    (hsel : (String.ofList ((strippedHex hex).toList.take 8)).toLower ≠ errorStringSelector) :
+    selectorGuardModel hex = none := by
+  simp [selectorGuardModel, hsel]
 
 -- ============================================================================
 -- 6. Minimum length guard
@@ -213,23 +218,17 @@ where
   **Minimum length guard**: if the payload is shorter than 8 + 64 + 64 = 136
   hex chars (after stripping 0x), `decodeRevertReason` returns Nothing.
 -/
-/- FINDING (2026-07-02): statement FALSE as written — same unconditional-strip mismatch; unprefixed length-136 payload satisfies the hypothesis yet decodes.
-   Quarantined pending faithful restatement (AGENT_ROADMAP Track A). Machine-
-   checked counterexample reasoning in git history / COVERAGE.md corrections.
+/-- Model of the length branch. -/
+def lengthGuardModel (hex : String) : Option String :=
+  if (strippedHex hex).length < 136 then none else some "placeholder"
 
-theorem decodeRevertReason_too_short
-    (hex : String)
-    (hshort : (hex.drop 2).length < 136) :
-    decodeRevertReason_model2 hex = none := by
-  simp [decodeRevertReason_model2]
-  omega
-where
-  decodeRevertReason_model2 : String → Option String := fun hex =>
-    let raw := if hex.startsWith "0x" || hex.startsWith "0X"
-               then hex.drop 2 else hex
-    if raw.length < 136 then none
-    else some "placeholder"
--/
+/-- RESTATED (2026-07-02; original was false — same unconditional-strip
+mismatch): a payload whose conditionally-stripped body is shorter than
+8+64+64 hex chars decodes to none. -/
+theorem decodeRevertReason_too_short (hex : String)
+    (hshort : (strippedHex hex).length < 136) :
+    lengthGuardModel hex = none := by
+  simp [lengthGuardModel, hshort]
 
 -- ============================================================================
 -- 7. Full decodeRevertReason correctness

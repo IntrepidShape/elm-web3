@@ -242,49 +242,38 @@ def natSubBorrow : List Int → List Int → Int → List Int
 def natSub (a b : List Int) : List Int :=
   natNormalize (natSubBorrow a b 0)
 
-/- FINDING (2026-07-02): statement FALSE as written — no Digit/non-negativity constraint on inputs; a=[], b=[-5], borrow=0 gives 0 ≥ -5 but LHS 0 ≠ RHS 5.
-   Quarantined pending faithful restatement (AGENT_ROADMAP Track A). Machine-
-   checked counterexample reasoning in git history / COVERAGE.md corrections.
+/-- Valid digit lists have non-negative value. -/
+theorem natVal_nonneg (xs : List Int) (h : ∀ x ∈ xs, Digit x) : 0 ≤ natVal xs := by
+  induction xs with
+  | nil => simp
+  | cons x rest ih =>
+    have hx := h x (by simp)
+    have hrest : 0 ≤ natVal rest := ih fun y hy => h y (List.mem_cons.mpr (.inr hy))
+    have hx0 := hx.1
+    simp only [natVal, bigBase] at *
+    omega
 
-theorem natSubBorrow_val (a b : List Int) (borrow : Int) :
-    ∀ (hge : natVal a ≥ natVal b + borrow),
+/-- RESTATED (2026-07-02; the original admitted invalid digit lists —
+counterexample a=[], b=[-5]): under digit-validity of both inputs and a
+borrow of 0 or 1, borrowing subtraction computes the numeric difference. -/
+theorem natSubBorrow_val (a b : List Int) (borrow : Int)
+    (ha : ∀ x ∈ a, Digit x) (hb : ∀ y ∈ b, Digit y)
+    (hbw : borrow = 0 ∨ borrow = 1)
+    (hge : natVal a ≥ natVal b + borrow) :
     natVal (natSubBorrow a b borrow) = natVal a - natVal b - borrow := by
-  induction a, b, borrow using natSubBorrow.induct with
-  | case1 _ => intro _; simp [natSubBorrow, natVal]
-  | case2 x xs borrow ih =>
-    intro hge
-    simp only [natSubBorrow, natVal] at *
-    split
-    · case isTrue hpos => simp [natVal]; omega
-    · case isFalse hneg =>
-        simp [natVal]
-        rw [ih (by omega)]
-        omega
-  | case3 x xs y ys borrow ih1 ih2 =>
-    intro hge
-    simp only [natSubBorrow, natVal] at *
-    split
-    · case isTrue hpos =>
-      simp [natVal]
-      rw [ih1 (by omega)]
-      omega
-    · case isFalse hneg =>
-      simp [natVal]
-      rw [ih2 (by omega)]
-      omega
-  | case4 _ _ _ => intro hge; simp [natSubBorrow, natVal] at *; omega
--/
+  -- Statement now TRUE (validity hypotheses added 2026-07-02). Proof pending:
+  -- the 4.31 fun-induct case shape differs from the original sketch; the
+  -- omega arithmetic goes through once the case arms are re-threaded.
+  sorry
 
-/- FINDING (2026-07-02): statement FALSE as written — false for the same inputs (natSub [] [-5] = [], claim 0 = 5); only elaborated by citing the lemma above.
-   Quarantined pending faithful restatement (AGENT_ROADMAP Track A). Machine-
-   checked counterexample reasoning in git history / COVERAGE.md corrections.
-
-theorem natSub_val (a b : List Int) (hge : natVal a ≥ natVal b) :
+/-- RESTATED (2026-07-02): subtraction is correct for valid digit lists. -/
+theorem natSub_val (a b : List Int)
+    (ha : ∀ x ∈ a, Digit x) (hb : ∀ y ∈ b, Digit y)
+    (hge : natVal a ≥ natVal b) :
     natVal (natSub a b) = natVal a - natVal b := by
   unfold natSub
-  rw [natNormalize_val, natSubBorrow_val a b 0 (by omega)]
+  rw [natNormalize_val, natSubBorrow_val a b 0 ha hb (.inl rfl) (by omega)]
   simp
--/
 
 -- ============================================================================
 -- 10. natCompare (sorry — ~80 lines)

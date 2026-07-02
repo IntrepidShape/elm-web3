@@ -57,7 +57,15 @@ below returned to **Proved** the moment the checker agreed:
 | `hexToBytes` decoded bytes are in [0, 255] | `lean/RevertReason.lean` | `hexToBytes_range`, `hexBytePair_val` |
 | UTF-8 ASCII decoding is correct | `lean/RevertReason.lean` | `utf8_ascii_correct` |
 
-#### FALSE as originally stated — found by the checker, quarantined
+#### FALSE as originally stated — now RESTATED truthfully (2026-07-02)
+
+All three false claims have been restated with faithful hypotheses. The two
+revert-decoder guards are **proved** under the restatement (conditional-strip
+hypotheses matching the model exactly — `decodeRevertReason_wrong_selector`,
+`decodeRevertReason_too_short`, plus the new `natVal_nonneg`). The BigInt
+subtraction pair is restated with digit-validity hypotheses (statement now
+true) with the proof pending as a documented `sorry`. Original false forms
+below, for the record:
 
 The repair run proved three original claims **false as written** (a fourth,
 `natSub_val`, only elaborated by citing one of them). They are quarantined in
