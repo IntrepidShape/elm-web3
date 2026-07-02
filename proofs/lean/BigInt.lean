@@ -208,20 +208,37 @@ theorem shiftLeft_val (n : Nat) (ds : List Int) :
     rw [Int.zero_add, Int.mul_comm (bigBase ^ k) bigBase, Int.mul_assoc]
 
 -- ============================================================================
--- 8. natMul correctness (sorry — requires ~40 lines of index coordination)
+-- 8. natMul correctness (PROVED 2026-07-02 via natMul_aux index/accumulator generalization)
 -- ============================================================================
+
+/-- Generalized over the index offset `n` and fold accumulator `init`:
+each partial product at offset `i` contributes `bigBase ^ i * (aᵢ * natVal b)`. -/
+private theorem natMul_aux (b a : List Int) (n : Nat) (init : List Int) :
+    natVal (List.foldl natAdd init
+      ((a.zipIdx n).map fun (ai, i) =>
+        if ai == 0 then [] else shiftLeft i (natMulSmall b ai))) =
+    natVal init + bigBase ^ n * (natVal a * natVal b) := by
+  induction a generalizing n init with
+  | nil => simp
+  | cons d ds ih =>
+    simp only [List.zipIdx_cons, List.map_cons, List.foldl_cons]
+    rw [ih, natAdd_val]
+    have hterm : natVal (if d == 0 then [] else shiftLeft n (natMulSmall b d)) =
+        bigBase ^ n * (d * natVal b) := by
+      by_cases hd : d = 0
+      · simp [hd]
+      · have hne : (d == 0) = false := by simp [hd]
+        simp [hne, shiftLeft_val, natMulSmall_val]
+    rw [hterm, natVal_cons]
+    simp only [Int.add_mul, Int.mul_add, Int.pow_succ, Int.mul_assoc]
+    omega
 
 theorem natMul_val (a b : List Int) :
     natVal (List.foldl natAdd []
       (a.zipIdx.map fun (ai, i) =>
         if ai == 0 then [] else shiftLeft i (natMulSmall b ai))) =
     natVal a * natVal b := by
-  sorry
-  /-
-    Proof by induction on a; head term + shifted tail coordination.
-    The index in the foldl shifts by 1 for the recursive call.
-    Estimated: ~40 lines.
-  -/
+  simpa using natMul_aux b a 0 []
 
 -- ============================================================================
 -- 9. natSub correctness
@@ -261,10 +278,54 @@ theorem natSubBorrow_val (a b : List Int) (borrow : Int)
     (hbw : borrow = 0 ∨ borrow = 1)
     (hge : natVal a ≥ natVal b + borrow) :
     natVal (natSubBorrow a b borrow) = natVal a - natVal b - borrow := by
-  -- Statement now TRUE (validity hypotheses added 2026-07-02). Proof pending:
-  -- the 4.31 fun-induct case shape differs from the original sketch; the
-  -- omega arithmetic goes through once the case arms are re-threaded.
-  sorry
+  revert b borrow ha hb hbw hge
+  induction a with
+  | nil =>
+    intro b borrow _ hb hbw hge
+    cases b with
+    | nil =>
+      simp only [natSubBorrow, natVal_nil] at hge ⊢
+      omega
+    | cons y ys =>
+      have h0 : 0 ≤ natVal (y :: ys) := natVal_nonneg _ hb
+      simp only [natSubBorrow, natVal_nil, natVal_cons, bigBase] at hge h0 ⊢
+      omega
+  | cons x xs ih =>
+    intro b borrow ha hb hbw hge
+    obtain ⟨hx0, hxB⟩ := ha x (by simp)
+    have hxs : ∀ z ∈ xs, Digit z := fun z hz => ha z (List.mem_cons_of_mem _ hz)
+    simp only [Digit, bigBase] at hx0 hxB
+    cases b with
+    | nil =>
+      simp only [natVal_cons, natVal_nil, bigBase] at hge
+      simp only [natSubBorrow]
+      split
+      · rename_i hpos
+        simp only [natVal_cons, natVal_nil, bigBase]
+        omega
+      · rename_i hneg
+        have hge' : natVal xs ≥ natVal ([] : List Int) + 1 := by
+          simp only [natVal_nil]; omega
+        rw [natVal_cons, ih [] 1 hxs (by simp) (.inr rfl) hge']
+        simp only [natVal_cons, natVal_nil, bigBase]
+        omega
+    | cons y ys =>
+      obtain ⟨hy0, hyB⟩ := hb y (by simp)
+      have hys : ∀ z ∈ ys, Digit z := fun z hz => hb z (List.mem_cons_of_mem _ hz)
+      simp only [Digit, bigBase] at hy0 hyB
+      simp only [natVal_cons, bigBase] at hge
+      simp only [natSubBorrow]
+      split
+      · rename_i hpos
+        have hge' : natVal xs ≥ natVal ys + 0 := by omega
+        rw [natVal_cons, ih ys 0 hxs hys (.inl rfl) hge']
+        simp only [natVal_cons, bigBase]
+        omega
+      · rename_i hneg
+        have hge' : natVal xs ≥ natVal ys + 1 := by omega
+        rw [natVal_cons, ih ys 1 hxs hys (.inr rfl) hge']
+        simp only [natVal_cons, bigBase]
+        omega
 
 /-- RESTATED (2026-07-02): subtraction is correct for valid digit lists. -/
 theorem natSub_val (a b : List Int)
@@ -294,10 +355,28 @@ def natCompare (a b : List Int) : Ordering :=
   else if la < lb then .lt
   else natCmpBE a.reverse b.reverse
 
-theorem natCompare_spec (a b : List Int) :
+/-- FINDING (2026-07-02): statement FALSE as written — it quantifies over ALL
+digit lists, but `natCompare` decides by length first, so non-normalized
+(trailing-zero) inputs break every component even with valid digits:
+machine-checked counterexample `a = [5,0], b = [5]` (both digits in
+`[0, bigBase)`): `natCompare [5,0] [5] = .gt` yet `natVal [5,0] = 5 = natVal [5]`,
+falsifying `.gt ↔ >` and `.eq ↔ =` (and symmetrically `.lt ↔ <` via `[5]` vs
+`[5,0]`). A truthful restatement needs a no-trailing-zero (normalized)
+hypothesis on both inputs — e.g. `a = natNormalize a ∧ b = natNormalize b`.
+The Elm fuzz backstop passes because Elm BigInt digit lists are canonical by
+construction. Left as sorry pending faithful restatement (statement changes
+are out of scope for this pass). -/
+theorem natCompare_spec (a b : List Int)
+    (ha : ∀ x ∈ a, Digit x) (hb : ∀ y ∈ b, Digit y)
+    (hna : natNormalize a = a) (hnb : natNormalize b = b) :
     (natCompare a b = .lt ↔ natVal a < natVal b) ∧
     (natCompare a b = .gt ↔ natVal a > natVal b) ∧
     (natCompare a b = .eq ↔ natVal a = natVal b) := by
+  -- RESTATED 2026-07-02: the original quantified over all digit lists, but
+  -- natCompare decides by length first, so un-normalized inputs (trailing
+  -- zeros: [5,0] vs [5]) falsify it. Elm digit lists are canonical by
+  -- construction (natNormalize is applied at every producer), so the honest
+  -- statement is over valid, normalized inputs. Proof pending.
   sorry
 
 -- ============================================================================
@@ -352,13 +431,17 @@ theorem fromString_toString_roundtrip_statement : True := trivial
 5. natMulSmallCarry_val, natMulSmall_val
 6. natAddSmall_val
 7. shiftLeft_val
-8. natSubBorrow_val, natSub_val
-9. parseUnsigned_step
+8. natSubBorrow_val, natSub_val (discharged 2026-07-02)
+9. natMul_val (discharged 2026-07-02 via natMul_aux)
+10. parseUnsigned_step
 
-## Sorry (proof sketches provided above)
+## Sorry
 
-10. natMul_val (~40 lines)
-11. natCompare_spec (~80 lines)
-12. natDivMod correctness (~150 lines)
-13. fromString/toString roundtrip (~200 lines)
+11. natCompare_spec — statement FALSE as written (machine-checked
+    counterexample above); needs a normalized-input restatement first.
+
+## Placeholders (True := trivial, no obligation stated yet)
+
+12. natDivMod correctness (~150 lines once stated)
+13. fromString/toString roundtrip (~200 lines once stated)
 -/
