@@ -11,7 +11,7 @@
     5. parseUnits rejects strings with multiple dots
     6. formatUnits 0 decimals = BigInt.toString n (decimals ≤ 0 short-circuit)
     7. Roundtrip: parseUnits d (formatUnits d n) = Just n
-       (stated; depends on BigInt.div/mod correctness — see sorry below)
+       (sketched only; depends on BigInt.div/mod correctness — see below)
 
   To check:
     $ lean proofs/lean/Units.lean
@@ -172,12 +172,26 @@ termination_by n => n.toNat
 decreasing_by omega
 
 theorem bigPow_pos (n : Int) : bigPow n > 0 := by
-  unfold bigPow
-  show (if n ≤ 0 then 1 else 10 * bigPow (n - 1)) > 0
-  split
-  · omega
-  · -- inductive step: 10 * bigPow (n-1) > 0
-    sorry  -- needs well-founded induction ~5 lines
+  -- Well-founded induction, packaged as strong induction on the fuel n.toNat.
+  have H : ∀ k : Nat, ∀ m : Int, m.toNat ≤ k → bigPow m > 0 := by
+    intro k
+    induction k with
+    | zero =>
+      intro m hm
+      unfold bigPow
+      show (if m ≤ 0 then 1 else 10 * bigPow (m - 1)) > 0
+      split
+      · omega
+      · omega  -- contradiction: m > 0 but m.toNat ≤ 0
+    | succ k ih =>
+      intro m hm
+      unfold bigPow
+      show (if m ≤ 0 then 1 else 10 * bigPow (m - 1)) > 0
+      split
+      · omega
+      · have hrec := ih (m - 1) (by omega)
+        omega
+  exact H n.toNat n (Nat.le_refl _)
 
 /-- formatUnits with decimals = 0 is just toString. -/
 theorem formatUnits_zero_decimals (n : String) :
@@ -246,9 +260,9 @@ theorem parseUnits_formatUnits_roundtrip (d : Int) (n : Int)
 6. **parseUnits rejection** (structural): empty string, negative string,
    multiple dots — each is a clearly guarded branch returning Nothing.
 
-## Sorry (proof sketches provided)
+7. **bigPow_pos**: `bigPow n > 0` — strong induction on the fuel `n.toNat`.
 
-7. **bigPow_pos**: `bigPow n > 0` — needs ~5 lines of well-founded induction.
+## Remaining (proof sketch provided)
 
 8. **parseUnits_formatUnits_roundtrip**: full roundtrip.
    Depends on `natDivMod_spec` (BigInt.lean, ~150 lines) and

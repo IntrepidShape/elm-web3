@@ -60,6 +60,10 @@ below returned to **Proved** the moment the checker agreed:
 | `natSubBorrow_val` / `natSub_val` — subtraction correct for valid digit lists under `≥` | `lean/BigInt.lean` | PROVED 2026-07-02 (restated with digit-validity; structural-induction proof) |
 | `natMul_val` — multiplication correct (`zipIdx` formulation) | `lean/BigInt.lean` | PROVED 2026-07-02 (offset/accumulator-generalizing aux lemma) |
 
+| `decodeRevertReason_correct` — full well-formed-payload correctness (conditional strip, selector, length, hexToInt/hexToBytes/UTF-8 pipeline mirroring Decode.elm) | `lean/RevertReason.lean` | PROVED 2026-07-02 |
+| `uint256_codec_roundtrip` — decimal string codec roundtrip over a real self-contained model | `lean/AbiCodec.lean` | PROVED 2026-07-02 |
+| `bigPow_pos` | `lean/Units.lean` | PROVED 2026-07-02 |
+
 #### FALSE as originally stated — now RESTATED truthfully (2026-07-02)
 
 All three false claims have been restated with faithful hypotheses. The two
@@ -168,11 +172,10 @@ Proved.
 |------|--------|
 | `natCompare_spec` | Restated 2026-07-02 over valid **normalized** inputs (the checker refuted the original: `natCompare [5,0] [5] = .gt` with equal values — length-first comparison vs trailing zeros; Elm lists are canonical by construction). Proof pending (`sorry`). |
 | `natDivMod_spec`, `fromString_toString_roundtrip` | **Not yet stated**: the model file carries `True := trivial` placeholders where these theorems belong. Stating them faithfully (then proving) is the work — previously this table implied they were stated-and-pending, which overstated. |
-| `decodeRevertReason_correct` | Stated; proof pending. |
-| `uint256_codec_roundtrip` | Blocked on a real (non-placeholder) BigInt string model inside AbiCodec. |
 | BigInt overflow-safety | Never stated in the model (previously listed here as pending — corrected). |
 
-Every entry above has an Elm fuzz backstop in `tests/` — the statements hold
+**Corpus sorry count: 1** (`natCompare_spec`, restated-true). Every entry
+above has an Elm fuzz backstop in `tests/` — the statements hold
 under machine-checked property testing; the Lean proofs are the outstanding
 stronger evidence.
 

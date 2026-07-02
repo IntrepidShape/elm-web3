@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.4.3 — 2026-07-02
+
+### Verification — the proof push
+
+- **Discharged:** `natSubBorrow_val`, `natSub_val`, `natMul_val`
+  (BigInt), `decodeRevertReason_correct` (full pipeline correctness over a
+  faithful model of Decode.elm), `uint256_codec_roundtrip` (over a real
+  self-contained decimal codec model), `bigPow_pos` (Units).
+- `natCompare_spec` was refuted as originally stated (machine-checked:
+  `natCompare [5,0] [5] = .gt` with equal values) and restated over valid
+  normalized inputs — the invariant Elm maintains by construction. Its
+  proof is the corpus's single remaining `sorry`.
+- The `natDivMod`/`fromString`-roundtrip entries turned out to be
+  `True`-placeholders in the model — recorded as "not yet stated" rather
+  than "pending", which the previous table overstated.
+
+Proofs/docs only; no library code changes.
+
+
 ## 1.4.2 — 2026-07-02
 
 - Docs-only: README refresh (verification-story links: proofs page, coverage

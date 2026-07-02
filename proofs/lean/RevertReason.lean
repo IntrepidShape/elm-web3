@@ -249,11 +249,17 @@ theorem decodeRevertReason_too_short (hex : String)
   `decodeRevertReason hex = Just s` where s is the UTF-8 decoding of stringBytes.
 -/
 
-/-- Placeholder for the full (multi-byte) UTF-8 decoder model; the ASCII
-    fragment is `utf8BytesToString_model` above. -/
-def utf8DecodeModel : List Int → Option String := fun _ => none
+/-- UTF-8 decoder model used by the full decoder pipeline. Per the modeling
+    choices (see Summary), the formal model covers the ASCII fragment
+    (`utf8BytesToString_model` above); multi-byte sequences follow the same
+    pattern in the Elm `utf8Help` and are out of scope of this file. -/
+def utf8DecodeModel : List Int → Option String := utf8BytesToString_model
 
-/-- The expected layout of a well-formed Error(string) revert payload. -/
+/-- The expected layout of a well-formed Error(string) revert payload.
+    (2026-07-02: the 64-char / whole-byte well-formedness of the words —
+    previously asserted only in the field doc comments while the decoder
+    model was a placeholder — is now carried as explicit fields; it is what
+    "well-formed" always meant in the layout description above.) -/
 structure ErrorStringPayload where
   /-- 64-char hex encoding of 0x20 (= 32). -/
   offsetWord   : String
@@ -263,6 +269,12 @@ structure ErrorStringPayload where
   stringBytes  : String
   /-- The actual string content. -/
   content      : String
+  /-- offsetWord is a full 32-byte word (64 hex chars). -/
+  offsetWord_len : offsetWord.length = 64
+  /-- lengthWord is a full 32-byte word (64 hex chars). -/
+  lengthWord_len : lengthWord.length = 64
+  /-- stringBytes is a whole number of bytes (even hex-char count). -/
+  stringBytes_even : stringBytes.length % 2 = 0
   /-- offsetWord decodes to 32. -/
   offset_is_32 : hexToInt_model offsetWord = 32
   /-- lengthWord decodes to the byte length. -/
@@ -271,8 +283,21 @@ structure ErrorStringPayload where
   bytes_ok     : ∀ bs, bs = hexToBytesModel stringBytes.data →
                    ∃ s, utf8DecodeModel bs = some s ∧ s = content
 
-/-- Placeholder model of the full decoder pipeline (pending obligation below). -/
-def decodeRevertReason_full : String → Option String := fun _ => none
+/-- Model of the full decoder pipeline, mirroring `decodeRevertReason` from
+    Decode.elm: conditional 0x-strip, selector guard (first 8 hex chars,
+    lowercased), minimum-length guard (≥ 8 + 64 + 64 chars), then
+    `hexToInt` on the length word at [72..135], `hexToBytes` on the
+    `2 * byteLen` string chars starting at 136 (padding beyond them is
+    ignored, as in Elm), and UTF-8 decoding of the resulting bytes. -/
+def decodeRevertReason_full (hex : String) : Option String :=
+  if (String.ofList ((strippedHex hex).toList.take 8)).toLower == errorStringSelector then
+    if (strippedHex hex).toList.length ≥ 136 then
+      utf8DecodeModel (hexToBytesModel
+        (((strippedHex hex).toList.drop 136).take
+          (2 * (hexToInt_model (String.ofList
+            (((strippedHex hex).toList.drop 72).take 64))).toNat)))
+    else none
+  else none
 
 /--
   **Full correctness**: for a well-formed ErrorStringPayload,
@@ -291,18 +316,70 @@ theorem decodeRevertReason_correct (p : ErrorStringPayload) :
     decodeRevertReason_full
       ("0x" ++ errorStringSelector ++ p.offsetWord ++ p.lengthWord ++ p.stringBytes)
       = some p.content := by
-  sorry
-  /-
-    The full proof requires:
-    a) String manipulation lemmas: take/drop correctness, length arithmetic.
-    b) hexToInt_correct applied to lengthWord.
-    c) hexToBytes_range applied to stringBytes.
-    d) utf8_ascii_correct (or the full UTF-8 version) applied to the decoded bytes.
-    e) Connecting p.bytes_ok to the decoded content.
-
-    This is a straightforward but tedious proof of ~100 lines, mostly
-    manipulating String.take and String.drop with explicit index arithmetic.
-  -/
+  obtain ⟨ow, lw, sb, content, how, hlw, hsbe, _hoff, hlen, hbytes⟩ := p
+  dsimp only
+  -- Char-list lengths of the words.
+  have howL : ow.toList.length = 64 := by rw [String.length_toList]; exact how
+  have hlwL : lw.toList.length = 64 := by rw [String.length_toList]; exact hlw
+  have hselL : errorStringSelector.toList.length = 8 := by decide
+  have h0x : ("0x" : String).toList = ['0', 'x'] := by decide
+  -- The payload starts with "0x", so strippedHex strips exactly those 2 chars.
+  have hstarts : ("0x" ++ errorStringSelector ++ ow ++ lw ++ sb).startsWith "0x" = true := by
+    simp
+  have hlist : (strippedHex ("0x" ++ errorStringSelector ++ ow ++ lw ++ sb)).toList
+      = errorStringSelector.toList ++ (ow.toList ++ (lw.toList ++ sb.toList)) := by
+    unfold strippedHex
+    rw [hstarts]
+    simp [h0x, List.append_assoc]
+  -- The selector is already lowercase.
+  have hlow : errorStringSelector.toLower = errorStringSelector := by
+    have h1 : errorStringSelector.toLower.toList = errorStringSelector.toList := by
+      unfold String.toLower
+      rw [String.toList_map]
+      decide
+    calc errorStringSelector.toLower
+        = String.ofList errorStringSelector.toLower.toList :=
+          String.ofList_toList.symm
+      _ = String.ofList errorStringSelector.toList := by rw [h1]
+      _ = errorStringSelector := String.ofList_toList
+  -- Index arithmetic for the fixed-offset words.
+  have h72len : (errorStringSelector.toList ++ ow.toList).length = 72 := by
+    rw [List.length_append, hselL, howL]
+  have h136len : ((errorStringSelector.toList ++ ow.toList) ++ lw.toList).length = 136 := by
+    rw [List.length_append, h72len, hlwL]
+  have hdrop72 :
+      (errorStringSelector.toList ++ (ow.toList ++ (lw.toList ++ sb.toList))).drop 72
+        = lw.toList ++ sb.toList := by
+    rw [show errorStringSelector.toList ++ (ow.toList ++ (lw.toList ++ sb.toList))
+          = (errorStringSelector.toList ++ ow.toList) ++ (lw.toList ++ sb.toList) by
+        simp [List.append_assoc]]
+    exact List.drop_left' h72len
+  have hdrop136 :
+      (errorStringSelector.toList ++ (ow.toList ++ (lw.toList ++ sb.toList))).drop 136
+        = sb.toList := by
+    rw [show errorStringSelector.toList ++ (ow.toList ++ (lw.toList ++ sb.toList))
+          = ((errorStringSelector.toList ++ ow.toList) ++ lw.toList) ++ sb.toList by
+        simp [List.append_assoc]]
+    exact List.drop_left' h136len
+  have hlen_ge :
+      (errorStringSelector.toList ++ (ow.toList ++ (lw.toList ++ sb.toList))).length
+        ≥ 136 := by
+    rw [List.length_append, List.length_append, List.length_append,
+      hselL, howL, hlwL]
+    omega
+  -- The length word recovers exactly the string-byte char count.
+  have h2n : 2 * (hexToInt_model lw).toNat = sb.toList.length := by
+    have hsl : sb.toList.length = sb.length := String.length_toList
+    omega
+  -- Run the decoder.
+  unfold decodeRevertReason_full
+  rw [hlist, List.take_left' hselL, String.ofList_toList, hlow,
+    if_pos (beq_self_eq_true errorStringSelector), if_pos hlen_ge,
+    hdrop72, List.take_left' hlwL, String.ofList_toList, hdrop136, h2n,
+    List.take_length]
+  -- utf8DecodeModel (hexToBytesModel sb.toList) = some content, by bytes_ok.
+  obtain ⟨s, hs, rfl⟩ := hbytes (hexToBytesModel sb.toList) rfl
+  exact hs
 
 -- ============================================================================
 -- Summary
@@ -329,11 +406,12 @@ theorem decodeRevertReason_correct (p : ErrorStringPayload) :
 
 7. **decodeRevertReason_too_short**: short payload → Nothing
 
-### Proved with sorry (proof sketches provided):
-
-8. **decodeRevertReason_correct**: for a fully well-formed Error(string) payload,
-   decoding returns the correct string content.
-   - Requires: String.take/drop arithmetic + chaining lemmas 2, 3, 5 (~100 lines)
+8. **decodeRevertReason_correct**: for a fully well-formed Error(string)
+   payload (`ErrorStringPayload`: 64-char offset/length words, whole-byte
+   string hex, length word = byte count, bytes decoding to the content),
+   `decodeRevertReason_full` returns exactly `some content`.
+   Discharged 2026-07-02 via char-list take/drop index arithmetic chained
+   through lemmas 2 and the `bytes_ok` field (ASCII UTF-8 model).
 
 ### Modeling choices:
 

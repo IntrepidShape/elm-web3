@@ -154,32 +154,122 @@ theorem mkBytes32_roundtrip (b : Bytes32) :
   This reduces to:
     BigInt.fromString (BigInt.toString n) = some n
 
-  which is exactly `fromString_toString_roundtrip` from BigInt.lean.
-  We state it here as a corollary.
+  which is `fromString_toString_roundtrip` from BigInt.lean (P14) for the
+  full base-10^7 engine. Here we prove it against a self-contained decimal
+  digit-list model with the same observable semantics (canonical decimal
+  strings, no sign, no leading zeros).
 -/
 
 /--
   **uint256 round-trip**:
   Decoding the JSON string produced by the uint256 encoder recovers the original BigInt.
 
-  Proof: By `fromString_toString_roundtrip` (BigInt.lean P14) and
-         `jsonString_roundtrip` (JSON axiom above).
+  Proof: roundtrip of the decimal model below, plus
+         `jsonString_roundtrip` (JSON axiom above) for the E.string/D.string layer.
 -/
-def BigIntT : Type := Unit  -- placeholder for BigInt type
+def BigIntT : Type := Nat  -- model: non-negative BigInt values (uint256 range)
 
 namespace BigInt
-  def fromString : String → Option BigIntT := fun _ => none
-  def toString   : BigIntT → String         := fun _ => ""
+
+  /-- The decimal digit character for d ∈ [0, 9]. -/
+  def digitChar (d : Nat) : Char := Char.ofNat (d + 48)
+
+  /-- Decimal digit characters of n, most significant first (mirrors
+      Elm `BigInt.toString` semantics for non-negative values). -/
+  def toDigits (n : Nat) : List Char :=
+    if _h : n < 10 then [digitChar n]
+    else toDigits (n / 10) ++ [digitChar (n % 10)]
+  termination_by n
+  decreasing_by exact Nat.div_lt_self (by omega) (by omega)
+
+  /-- `BigInt.toString`: render as a decimal string (no leading zeros,
+      "0" for zero). -/
+  def toString (n : BigIntT) : String := String.ofList (toDigits n)
+
+  /-- Value of a decimal digit-char list (most significant first). -/
+  def digitsVal (cs : List Char) : Nat :=
+    cs.foldl (fun acc c => acc * 10 + (c.toNat - 48)) 0
+
+  /-- `BigInt.fromString`: parse a non-empty all-digit decimal string
+      (mirrors Elm `BigInt.fromString` on canonical non-negative input). -/
+  def fromString (s : String) : Option BigIntT :=
+    let cs := s.toList
+    if cs.isEmpty then none
+    else if cs.all Char.isDigit then some (digitsVal cs) else none
+
+  theorem digitChar_isDigit (d : Nat) (h : d < 10) :
+      (digitChar d).isDigit = true := by
+    match d, h with
+    | 0, _ | 1, _ | 2, _ | 3, _ | 4, _
+    | 5, _ | 6, _ | 7, _ | 8, _ | 9, _ => decide
+
+  theorem digitChar_toNat (d : Nat) (h : d < 10) :
+      (digitChar d).toNat = d + 48 := by
+    match d, h with
+    | 0, _ | 1, _ | 2, _ | 3, _ | 4, _
+    | 5, _ | 6, _ | 7, _ | 8, _ | 9, _ => decide
+
+  theorem toDigits_ne_nil (n : Nat) : toDigits n ≠ [] := by
+    unfold toDigits
+    split
+    · simp
+    · simp
+
+  theorem toDigits_all_digit (n : Nat) :
+      ∀ c ∈ toDigits n, c.isDigit = true := by
+    induction n using toDigits.induct with
+    | case1 n h =>
+      rw [toDigits, dif_pos h]
+      intro c hc
+      simp only [List.mem_singleton] at hc
+      subst hc
+      exact digitChar_isDigit n h
+    | case2 n h ih =>
+      rw [toDigits, dif_neg h]
+      intro c hc
+      rcases List.mem_append.mp hc with hc | hc
+      · exact ih c hc
+      · simp only [List.mem_singleton] at hc
+        subst hc
+        exact digitChar_isDigit (n % 10) (Nat.mod_lt _ (by omega))
+
+  theorem digitsVal_append_digit (l : List Char) (c : Char) :
+      digitsVal (l ++ [c]) = digitsVal l * 10 + (c.toNat - 48) := by
+    unfold digitsVal
+    rw [List.foldl_append]
+    rfl
+
+  theorem digitsVal_toDigits (n : Nat) : digitsVal (toDigits n) = n := by
+    induction n using toDigits.induct with
+    | case1 n h =>
+      rw [toDigits, dif_pos h]
+      show 0 * 10 + ((digitChar n).toNat - 48) = n
+      rw [digitChar_toNat n h]
+      omega
+    | case2 n h ih =>
+      rw [toDigits, dif_neg h, digitsVal_append_digit, ih,
+        digitChar_toNat (n % 10) (Nat.mod_lt _ (by omega))]
+      omega
+
 end BigInt
 
 theorem uint256_codec_roundtrip :
     ∀ n : BigIntT,
       BigInt.fromString (BigInt.toString n) = some n := by
-  sorry
+  intro n
+  unfold BigInt.fromString BigInt.toString
+  have hne : (BigInt.toDigits n).isEmpty = false := by
+    rcases h : BigInt.toDigits n with _ | ⟨c, cs⟩
+    · exact absurd h (BigInt.toDigits_ne_nil n)
+    · rfl
+  have hall : (BigInt.toDigits n).all Char.isDigit = true :=
+    List.all_eq_true.mpr (BigInt.toDigits_all_digit n)
+  simp only [String.toList_ofList, hne, hall, Bool.false_eq_true, if_false, if_true]
+  exact congrArg some (BigInt.digitsVal_toDigits n)
   /-
-    Follows directly from `fromString_toString_roundtrip` in BigInt.lean.
+    This is the self-contained model analogue of
+    `fromString_toString_roundtrip` in BigInt.lean (P14).
     The JSON wrapping (E.string / D.string) is handled by `jsonString_roundtrip`.
-    No additional proof content needed beyond P14.
   -/
 
 -- ============================================================================
@@ -281,7 +371,10 @@ theorem string_codec_roundtrip (s : String) :
 
 7. **uint256 codec roundtrip** (`uint256_codec_roundtrip`):
    `BigInt.fromString (BigInt.toString n) = some n`
-   (reduces to `fromString_toString_roundtrip` from BigInt.lean)
+   Proved against a self-contained decimal-string model (digit-list
+   fold), mirroring Elm's BigInt decimal semantics for non-negative
+   values; the model analogue of `fromString_toString_roundtrip`
+   (BigInt.lean P14).
 
 8. **bool / string roundtrips**:
    Trivially true by the JSON library contract (stated as axioms).
@@ -290,7 +383,8 @@ theorem string_codec_roundtrip (s : String) :
 
 - `bytes32` properties: self-contained (parallel to Address.lean / TxHash.lean)
 - `address` roundtrip: delegates to Address.lean `mkAddress_addressToString_roundtrip`
-- `uint256` roundtrip: delegates to BigInt.lean `fromString_toString_roundtrip`
+- `uint256` roundtrip: self-contained (decimal digit-list model above);
+  the full base-10^7 engine version lives in BigInt.lean
 - JSON layer: treated as an axiom (`jsonString_roundtrip`)
 
 ## How to Check
