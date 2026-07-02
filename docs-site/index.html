@@ -135,8 +135,8 @@
       chain · a session always returns to a resting state (Disconnected or
       ReadOnly) · Connected exits only to WrongChain, Disconnected, or Error ·
       ReadOnly exits only via a wallet announcement.</em>
-      The ✓ edge is the 1.2.1 fix — before it, a user who fixed their chain
-      by hand stayed stuck in WrongChain forever.
+      The ✓ edge means a user who switches chains by hand in the wallet UI
+      recovers instantly — no app round-trip required.
     </figcaption>
   </figure>
 
@@ -164,9 +164,9 @@
       reachable only from AwaitingSignature · Confirming always carries a
       valid hash · the confirmation count strictly increases · every pending
       transaction eventually terminates.</em>
-      The n′&nbsp;&gt;&nbsp;n guard is the 1.2.1 fix: before it, a stale port
-      message could run the counter backwards. Failure edges drawn once for
-      legibility — every non-terminal state has one.
+      The n′&nbsp;&gt;&nbsp;n guard drops stale or reordered port messages on
+      the floor — the counter can only move forward. Failure edges drawn once
+      for legibility; every non-terminal state has one.
     </figcaption>
   </figure>
 
