@@ -187,7 +187,15 @@ verified evidence, though weaker than a proof.
 
 1. **TLA+ is finite-model checked, not proof-verified.** The model checker explores all reachable states within the given constants (2 addresses, 2 chains, 3 confirmation depth). Properties hold for those parameters; they hold generally by the construction of the state machine, but this is not mechanically proved.
 
-2. **Lean proofs model a simplified `toLowerHex`** that only maps `A–F → a–f`. The Elm runtime's `String.toLower` is broader (full Unicode case folding). In practice all addresses are ASCII hex, so this does not matter, but it is a gap between the model and the implementation.
+2. **Lean proofs model a simplified `toLowerHex`** that only maps `A–F → a–f`,
+   while Elm's `String.toLower` performs full Unicode folding. **Decision
+   (2026-07-02, explicit):** keep the simplified model, documented. The two
+   functions agree on every string the validators accept (`0x` + hex digits —
+   pure ASCII), and the validator runs *before* lowering, so no input on which
+   they differ can reach the modeled code path. Strengthening the model to
+   full Unicode folding would add large modeling surface to protect against
+   inputs that are already rejected. Revisit only if validation order ever
+   changes.
 
 3. **JS port findings (F1–F7) from `JS_PORT_PROOF.md` are not fixed.** `watchEvent` is a stub; `switchChain` sends no success response; error tag naming is inconsistent. These are documented, not remediated.
 

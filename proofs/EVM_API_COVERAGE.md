@@ -108,6 +108,23 @@ Legend: ✅ covered · 🟡 partial/via-port-only · ❌ not covered (with verdi
 
 ---
 
+## Design note — total inbound decoder (`Web3.Incoming`), decided 2026-07-02
+
+Today each module ships its own decoder and apps dispatch on the wire `tag`
+by hand. The considered improvement: one exposed
+`Web3.Incoming.decoder : Decoder Incoming` with a custom-type arm per inbound
+tag, so an app writes a single `case` and the compiler enforces totality.
+
+**Decision: build it as the headline of the next MINOR that touches the wire
+(not standalone).** Rationale: (a) it must include every tag, so shipping it
+between wire-changing releases immediately deprecates itself; (b) it is
+purely additive (existing per-module decoders remain); (c) the union has ~35
+arms — mechanical, but worth generating from the port's tag inventory to keep
+the 1:1 wire-integrity property checkable. Sketch:
+`type Incoming = WalletMsg Wallet.Msg | TxMsg Tx.Msg | FeeGasPrice String BigInt | … | Unknown String`
+with `Unknown` carrying unrecognised tags (never a decode failure — forward
+compatibility).
+
 ## Verdict
 
 The library covers the **entire dapp-relevant EVM surface**: EIP-1193 +
