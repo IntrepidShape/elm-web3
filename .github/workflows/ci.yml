@@ -58,3 +58,24 @@ jobs:
 
       - name: Run TLC on every spec
         run: ./proofs/tla/check-tla.sh
+
+  lean:
+    name: Check Lean 4 proofs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install elan + pinned toolchain
+        run: |
+          curl -sSf https://elan.lean-lang.org/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Check every proof file
+        run: |
+          cd proofs/lean
+          fail=0
+          for f in *.lean; do
+            if lean "$f" > /tmp/out 2>&1; then echo "OK  $f"
+            else echo "FAIL $f"; cat /tmp/out; fail=1; fi
+          done
+          exit $fail

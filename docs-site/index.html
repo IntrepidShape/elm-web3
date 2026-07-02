@@ -16,7 +16,7 @@
   <p class="hero__lead">
     Most libraries tell you they are correct. This one shows you the machine
     output. Every claim below is graded by what a checker did — not by what a
-    document says — and the ledger at the bottom records the three times our
+    document says — and the ledger at the bottom records the four times our
     own machines caught us claiming too much.
   </p>
   <nav class="hero__links">
@@ -77,16 +77,17 @@
   <figure class="fig">
     <svg viewBox="0 0 760 210" role="img" aria-label="Bar chart of verification coverage by grade" id="coverage-chart">
       <!-- values injected at build-audit time; keep in sync with COVERAGE.md -->
-      <g class="bar bar--proved"><rect x="170" y="18"  height="26" width="90"/><text x="12" y="36" class="bar__label">Proved (Lean)</text><text x="270" y="36" class="bar__n">9</text></g>
+      <g class="bar bar--proved"><rect x="170" y="18"  height="26" width="190"/><text x="12" y="36" class="bar__label">Proved (Lean)</text><text x="370" y="36" class="bar__n">19</text></g>
       <g class="bar bar--tlc">   <rect x="170" y="56"  height="26" width="140"/><text x="12" y="74" class="bar__label">Model-checked (TLC)</text><text x="320" y="74" class="bar__n">14</text></g>
       <g class="bar bar--fuzz">  <rect x="170" y="94"  height="26" width="310"/><text x="12" y="112" class="bar__label">Property-tested (fuzz)</text><text x="490" y="112" class="bar__n">31</text></g>
-      <g class="bar bar--auth">  <rect x="170" y="132" height="26" width="150"/><text x="12" y="150" class="bar__label">Authored, unverified</text><text x="330" y="150" class="bar__n">15</text></g>
+      <g class="bar bar--auth">  <rect x="170" y="132" height="26" width="30"/><text x="12" y="150" class="bar__label">False as stated (quarantined)</text><text x="210" y="150" class="bar__n">3</text></g>
       <g class="bar bar--sorry"> <rect x="170" y="170" height="26" width="70"/><text x="12" y="188" class="bar__label">Open obligations</text><text x="250" y="188" class="bar__n">7</text></g>
     </svg>
     <figcaption>
-      Counts as of 2026-07-02, after the first local Lean run downgraded
-      fifteen rows from "Proved" to "authored" — see the ledger below.
-      Repair is in progress; this chart moves only when the checker's exit code does.
+      Counts as of 2026-07-02, end of day: all ten Lean files check on the
+      pinned toolchain; twelve of the fifteen downgraded rows earned their way
+      back, and three turned out to be false as stated — quarantined, not
+      quietly reworded. The chart moves only when a checker's exit code does.
     </figcaption>
   </figure>
 </section>
@@ -226,7 +227,7 @@
 
 <!-- ═══════════════════ THE LEDGER ═══════════════════ -->
 <section class="sec sec--ledger">
-  <h2>Three times the machines caught us</h2>
+  <h2>Four times the machines caught us</h2>
   <p>
     A verification story you should trust will include the failures. Ours has
     three, each found by finally making a machine touch a claim that had only
@@ -249,6 +250,16 @@
       exposed it in one frame; fixed in 1.2.2 and pinned by canonical solc
       vectors. Proofs guarantee internal consistency; constants that point at
       the world need oracle tests against the world.
+    </li>
+    <li>
+      <strong>Three "proved" statements were false.</strong> Repairing the
+      files forced the checker's eye onto every statement, and three did not
+      survive it: the BigInt subtraction lemma admitted invalid digit lists
+      (<code>a=[], b=[-5]</code> satisfies its hypothesis and refutes its
+      conclusion), and both revert-decoder guard theorems stripped the
+      <code>0x</code> prefix unconditionally where the code strips it
+      conditionally. All three are quarantined in the files with their
+      counterexamples — a false claim gets recorded, not silently reworded.
     </li>
     <li>
       <strong>Seven of ten Lean files had never compiled.</strong> The first

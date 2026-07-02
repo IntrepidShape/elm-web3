@@ -36,15 +36,13 @@ Companion documents:
 | `HexString` structural invariants: starts "0x", hex body, non-empty, length ≥ 2 | `lean/HexString.lean` | `hexString_startsWith0x`, `hexString_hex_body`, `hexString_nonempty`, `hexString_length_ge_2` |
 
 
-#### Authored — does NOT currently check (under repair; NOT Proved)
+#### Verified 2026-07-02 — repaired to the pinned toolchain, `lean` exits 0
 
-These statements are written and may well be true (several have Property-tested
-backstops), but `lean` reports errors on the pinned toolchain, so per the
-grading rules they are **Unverified** until repaired. Files:
-`WalletCodec.lean` (6 errors), `AbiCodec.lean` (12), `SignState.lean` (10),
-`TxCmd.lean` (3), `Units.lean` (12), `BigInt.lean` (20), `RevertReason.lean` (25).
+All ten files now machine-check (the seven broken ones were repaired without
+weakening any surviving statement — fix classes in git history). The rows
+below returned to **Proved** the moment the checker agreed:
 
-| Statement (as originally claimed) | File | Named results |
+| Property | File | Theorems |
 |----------|------|----------|
 | `bytes32` decoder: soundness, completeness, injectivity, roundtrip | `lean/AbiCodec.lean` | `mkBytes32_sound`, `mkBytes32_none_iff`, `mkBytes32_some_iff`, `bytes32_injective`, `mkBytes32_roundtrip` |
 | `address` ABI codec roundtrip | `lean/AbiCodec.lean` | `address_codec_roundtrip` |
@@ -53,14 +51,26 @@ grading rules they are **Unverified** until repaired. Files:
 | `natAddCarry` is correct | `lean/BigInt.lean` | `natAddCarry_val` |
 | `natAdd`, `natMulSmall`, `natAddSmall` are correct | `lean/BigInt.lean` | `natAdd_val`, `natMulSmall_val`, `natAddSmall_val` |
 | `shiftLeft` multiplies by base^n | `lean/BigInt.lean` | `shiftLeft_val` |
-| `natSub` is correct under ≥ precondition | `lean/BigInt.lean` | `natSubBorrow_val`, `natSub_val` |
 | `parseUnsigned` accumulation step is correct | `lean/BigInt.lean` | `parseUnsigned_step` |
 | `hexDigitVal` produces values in [0, 15] | `lean/RevertReason.lean` | `hexDigitVal_range` |
 | `hexToInt` is definitionally correct | `lean/RevertReason.lean` | `hexToInt_correct` |
 | `hexToBytes` decoded bytes are in [0, 255] | `lean/RevertReason.lean` | `hexToBytes_range`, `hexBytePair_val` |
 | UTF-8 ASCII decoding is correct | `lean/RevertReason.lean` | `utf8_ascii_correct` |
-| `decodeRevertReason` wrong selector → Nothing | `lean/RevertReason.lean` | `decodeRevertReason_wrong_selector` |
-| `decodeRevertReason` short payload → Nothing | `lean/RevertReason.lean` | `decodeRevertReason_too_short` |
+
+#### FALSE as originally stated — found by the checker, quarantined
+
+The repair run proved three original claims **false as written** (a fourth,
+`natSub_val`, only elaborated by citing one of them). They are quarantined in
+comments inside the files pending faithful restatement — a false claim does
+not get repaired into a different claim silently:
+
+| Original claim | File | Why it is false |
+|----------|------|----------|
+| `natSubBorrow_val` / `natSub_val` — subtraction correct under `≥` | `lean/BigInt.lean` | The statement admits invalid digit lists: `a=[]`, `b=[-5]` satisfies `0 ≥ -5`, yet LHS `0` ≠ RHS `5`. Needs a digit-validity hypothesis. The Elm code never builds invalid digit lists — the *model's statement* was wrong, not the library. |
+| `decodeRevertReason` wrong selector → Nothing | `lean/RevertReason.lean` | Hypothesis strips two chars unconditionally; the model (and the Elm) strip only when `0x`-prefixed. An unprefixed valid payload satisfies the hypothesis and still decodes. |
+| `decodeRevertReason` short payload → Nothing | `lean/RevertReason.lean` | Same unconditional-strip mismatch, via the length check. |
+
+Restating and reproving these with faithful hypotheses is tracked work.
 
 ### TLA+ — state machine invariants (model-checked by TLC)
 

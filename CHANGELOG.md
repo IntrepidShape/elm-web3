@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.2.3 — 2026-07-02
+
+### Verification — all ten Lean files now machine-check (first time ever)
+
+- Installed the toolchain (elan, Lean 4.31.0 pinned in
+  `proofs/lean/lean-toolchain`) and ran `lean` on every proof file for the
+  first time in the project's history: only 3 of 10 checked. All seven broken
+  files were repaired to the pinned toolchain without weakening any surviving
+  statement; **all ten now exit 0**, and a `lean` CI job enforces it on every
+  PR alongside TLC and elm-test.
+- **The checker found three original claims FALSE as stated** (quarantined
+  in-file with counterexamples, not silently reworded): the BigInt
+  subtraction lemmas admit invalid digit lists (`a=[], b=[-5]`), and both
+  revert-decoder guard theorems strip the `0x` prefix unconditionally where
+  the code strips it conditionally. Faithful restatement is tracked work.
+  The Elm library itself is unaffected — these were defects in the models'
+  statements.
+- `proofs/COVERAGE.md`: 12 of the 15 downgraded rows promoted back to Proved
+  by the checker; the 3 false ones get their own labelled section.
+- **New: [What is actually proved](https://intrepidshape.github.io/elm-web3/)**
+  — the verification story as a zero-JS page: the four-checker stack, the
+  honest coverage chart, all four state machines drawn from their TLA+ specs,
+  and the corrections ledger (now four entries). README links it, the
+  gallery, and the audit docs.
+
+Docs/proofs/CI only — no library code changes.
+
+
 ## 1.2.2 — 2026-07-02
 
 ### Fixed — revert reasons never decoded (wrong selector constant)

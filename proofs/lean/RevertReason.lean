@@ -43,8 +43,9 @@ def IsHexChar (c : Char) : Prop :=
 theorem hexDigitVal_range (c : Char) (h : IsHexChar c) :
     0 ≤ hexDigitVal c ∧ hexDigitVal c ≤ 15 := by
   unfold hexDigitVal IsHexChar at *
+  simp only [Char.le_def, UInt32.le_iff_toNat_le] at *
   rcases h with (⟨h0, h9⟩ | ⟨ha, hf⟩ | ⟨hA, hF⟩) <;>
-  simp_all <;> omega
+    split <;> (try split) <;> (try split) <;> simp_all <;> omega
 
 -- ============================================================================
 -- 2. hexToInt correctness
@@ -78,9 +79,11 @@ theorem hexToInt_length_word (n : Int) (hn : 0 ≤ n) :
       encoded.length = 64 →
       (∀ c ∈ encoded, IsHexChar c) →
       hexStringVal encoded = n →
-      hexToInt_model ⟨encoded⟩ = n := by
+      hexToInt_model (String.ofList encoded) = n := by
   intro encoded _ _ heq
-  simp [hexToInt_model, hexStringVal, heq]
+  show hexStringVal (String.ofList encoded).toList = n
+  rw [String.toList_ofList]
+  exact heq
 
 -- ============================================================================
 -- 3. hexToBytes correctness
@@ -100,24 +103,25 @@ theorem hexToBytes_range (s : String)
     (heven : s.length % 2 = 0)
     (hhex  : ∀ c ∈ s.data, IsHexChar c) :
     ∀ b ∈ hexToBytesModel s.data, 0 ≤ b ∧ b ≤ 255 := by
-  induction s.data using List.rec with
-  | nil => simp [hexToBytesModel]
-  | cons c1 rest ih =>
-    cases rest with
-    | nil => simp [hexToBytesModel]
-    | cons c2 rest2 =>
-      simp [hexToBytesModel]
-      intro b hb
-      cases hb with
-      | head =>
-        have hc1 := hexDigitVal_range c1 (hhex c1 (List.mem_cons_self _ _))
-        have hc2 := hexDigitVal_range c2 (hhex c2 (by simp))
-        constructor <;> omega
-      | tail _ hb2 =>
-        apply ih
-        · simp [String.length] at heven ⊢; omega
-        · intro c hc; exact hhex c (List.mem_cons.mpr (.inr (.inr hc)))
-        · exact hb2
+  suffices h : ∀ l : List Char, (∀ c ∈ l, IsHexChar c) →
+      ∀ b ∈ hexToBytesModel l, 0 ≤ b ∧ b ≤ 255 from h s.data hhex
+  intro l
+  induction l using hexToBytesModel.induct with
+  | case1 c1 c2 rest ih =>
+    intro hl b hb
+    simp only [hexToBytesModel] at hb
+    rcases List.mem_cons.mp hb with hb | hb
+    · subst hb
+      have hc1 := hexDigitVal_range c1 (hl c1 (by simp))
+      have hc2 := hexDigitVal_range c2 (hl c2 (by simp))
+      omega
+    · exact ih (fun c hc => hl c (by simp [hc])) b hb
+  | case2 l hne =>
+    intro _ b hb
+    unfold hexToBytesModel at hb
+    split at hb
+    · exact absurd rfl (hne _ _ _)
+    · simp at hb
 
 /--
   For a well-formed hex byte pair (2 chars), the decoded byte equals
@@ -140,6 +144,18 @@ theorem hexBytePair_val (c1 c2 : Char)
 def IsAsciiBytes (bs : List Int) : Prop :=
   ∀ b ∈ bs, 0 ≤ b ∧ b < 0x80
 
+/-- ASCII fragment of the `utf8BytesToString` decoder from Decode.elm:
+    a byte in [0, 0x80) decodes to the character with that code point;
+    anything else is out of scope for the ASCII correctness theorem. -/
+def utf8BytesToString_model : List Int → Option String
+  | [] => some ""
+  | b :: rest =>
+      if 0 ≤ b ∧ b < 0x80 then
+        match utf8BytesToString_model rest with
+        | some s => some (String.ofList (Char.ofNat b.toNat :: s.toList))
+        | none => none
+      else none
+
 /--
   **utf8 ASCII correctness**: for an ASCII byte sequence bs,
   utf8BytesToString bs = some (string of characters with those code points).
@@ -148,16 +164,17 @@ theorem utf8_ascii_correct (bs : List Int) (h : IsAsciiBytes bs) :
     ∃ s : String, s.data = bs.map (fun b => Char.ofNat b.toNat) ∧
       utf8BytesToString_model bs = some s := by
   induction bs with
-  | nil => exact ⟨"", rfl, by simp [utf8BytesToString_model]⟩
+  | nil => exact ⟨"", rfl, rfl⟩
   | cons b rest ih =>
-    have hb := h b (List.mem_cons_self _ _)
+    have hb := h b (by simp)
     have hrest : IsAsciiBytes rest := fun b' hb' => h b' (List.mem_cons.mpr (.inr hb'))
     obtain ⟨s, hs_data, hs_ok⟩ := ih hrest
-    refine ⟨⟨Char.ofNat b.toNat :: s.data⟩, ?_, ?_⟩
-    · simp [hs_data]
+    refine ⟨String.ofList (Char.ofNat b.toNat :: s.toList), ?_, ?_⟩
+    · show (String.ofList (Char.ofNat b.toNat :: s.toList)).toList =
+        Char.ofNat b.toNat :: List.map (fun b => Char.ofNat b.toNat) rest
+      rw [String.toList_ofList,
+        show s.toList = List.map (fun b => Char.ofNat b.toNat) rest from hs_data]
     · simp [utf8BytesToString_model, hb.1, hb.2, hs_ok]
-where
-  utf8BytesToString_model : List Int → Option String := fun _ => none  -- placeholder
 
 -- ============================================================================
 -- 5. Selector guard
@@ -166,10 +183,14 @@ where
 /-- The Error(string) function selector (4 bytes = 8 hex chars). -/
 def errorStringSelector : String := "08c379a0"
 
-/--
+/-!ORPHAN doc comment of a quarantined theorem:
   **Selector guard**: if the first 8 hex chars of the payload (after 0x)
   are not "08c379a0", `decodeRevertReason` returns Nothing.
 -/
+/- FINDING (2026-07-02): statement FALSE as written — hypothesis strips 2 chars unconditionally; the model (and Elm) strip only when 0x-prefixed. Unprefixed valid payload satisfies the hypothesis yet decodes.
+   Quarantined pending faithful restatement (AGENT_ROADMAP Track A). Machine-
+   checked counterexample reasoning in git history / COVERAGE.md corrections.
+
 theorem decodeRevertReason_wrong_selector
     (hex : String)
     (hsel : (String.take 8 (String.toLower (String.dropLeft 2 hex))) ≠ errorStringSelector) :
@@ -182,15 +203,20 @@ where
     let selector := (raw.take 8).toLower
     if selector == errorStringSelector then some "placeholder"
     else none
+-/
 
 -- ============================================================================
 -- 6. Minimum length guard
 -- ============================================================================
 
-/--
+/-!ORPHAN doc comment of a quarantined theorem:
   **Minimum length guard**: if the payload is shorter than 8 + 64 + 64 = 136
   hex chars (after stripping 0x), `decodeRevertReason` returns Nothing.
 -/
+/- FINDING (2026-07-02): statement FALSE as written — same unconditional-strip mismatch; unprefixed length-136 payload satisfies the hypothesis yet decodes.
+   Quarantined pending faithful restatement (AGENT_ROADMAP Track A). Machine-
+   checked counterexample reasoning in git history / COVERAGE.md corrections.
+
 theorem decodeRevertReason_too_short
     (hex : String)
     (hshort : (hex.drop 2).length < 136) :
@@ -203,6 +229,7 @@ where
                then hex.drop 2 else hex
     if raw.length < 136 then none
     else some "placeholder"
+-/
 
 -- ============================================================================
 -- 7. Full decodeRevertReason correctness
@@ -223,6 +250,10 @@ where
   `decodeRevertReason hex = Just s` where s is the UTF-8 decoding of stringBytes.
 -/
 
+/-- Placeholder for the full (multi-byte) UTF-8 decoder model; the ASCII
+    fragment is `utf8BytesToString_model` above. -/
+def utf8DecodeModel : List Int → Option String := fun _ => none
+
 /-- The expected layout of a well-formed Error(string) revert payload. -/
 structure ErrorStringPayload where
   /-- 64-char hex encoding of 0x20 (= 32). -/
@@ -240,8 +271,9 @@ structure ErrorStringPayload where
   /-- stringBytes decodes (as UTF-8) to content. -/
   bytes_ok     : ∀ bs, bs = hexToBytesModel stringBytes.data →
                    ∃ s, utf8DecodeModel bs = some s ∧ s = content
-where
-  utf8DecodeModel : List Int → Option String := fun _ => none
+
+/-- Placeholder model of the full decoder pipeline (pending obligation below). -/
+def decodeRevertReason_full : String → Option String := fun _ => none
 
 /--
   **Full correctness**: for a well-formed ErrorStringPayload,
@@ -272,8 +304,6 @@ theorem decodeRevertReason_correct (p : ErrorStringPayload) :
     This is a straightforward but tedious proof of ~100 lines, mostly
     manipulating String.take and String.drop with explicit index arithmetic.
   -/
-where
-  decodeRevertReason_full : String → Option String := fun _ => none
 
 -- ============================================================================
 -- Summary

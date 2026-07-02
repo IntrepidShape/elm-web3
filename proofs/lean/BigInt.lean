@@ -42,12 +42,8 @@ theorem natVal_append_zeros (ds : List Int) (n : Nat) :
   induction n with
   | zero => simp
   | succ k ih =>
-    have hrep : List.replicate (k + 1) (0 : Int) = List.replicate k 0 ++ [0] := by
-      induction k with
-      | zero => simp
-      | succ m ihm =>
-        rw [List.replicate_succ, List.replicate_succ, ihm]
-        simp [List.cons_append]
+    have hrep : List.replicate (k + 1) (0 : Int) = List.replicate k 0 ++ [0] :=
+      List.replicate_succ'
     rw [hrep, ← List.append_assoc, natVal_append_zero, ih]
 
 def natNormalize (ds : List Int) : List Int :=
@@ -64,24 +60,29 @@ theorem natNormalize_val (ds : List Int) : natVal (natNormalize ds) = natVal ds 
   induction ds using natNormalize.induct with
   | case1 x h =>
     have hx : x = [] := List.reverse_eq_nil_iff.mp h
-    subst hx; simp [natNormalize]
+    subst hx
+    rw [natNormalize.eq_def]
+    rfl
   | case2 x rest h ih =>
-    simp only [natNormalize, h]
-    rw [ih]
+    have hstep : natNormalize x = natNormalize rest.reverse := by
+      rw [natNormalize.eq_def]
+      split
+      · next heq => rw [heq] at h; cases h
+      · next r heq => rw [heq] at h; cases h; rfl
+      · next h1 h2 => exact absurd h (h2 rest)
+    rw [hstep, ih]
     have hx : x = rest.reverse ++ [0] := by
-      have := congr_arg List.reverse h
-      simp [List.reverse_reverse] at this
-      exact this.symm
+      have := congrArg List.reverse h
+      simpa using this
     rw [hx, natVal_append_zero]
   | case3 x h1 h2 =>
-    simp only [natNormalize]
-    cases hrev : x.reverse with
-    | nil => exact absurd hrev h1
-    | cons c rest =>
-      simp only [hrev]
-      by_cases hc : c = 0
-      · subst hc; exact absurd hrev (h2 rest)
-      · simp [hc]
+    have hstep : natNormalize x = x := by
+      rw [natNormalize.eq_def]
+      split
+      · next heq => exact absurd heq h1
+      · next r heq => exact absurd heq (h2 r)
+      · rfl
+    rw [hstep]
 
 -- ============================================================================
 -- 3. natAddCarry correctness
@@ -107,20 +108,28 @@ theorem natAddCarry_val (a b : List Int) (c : Int) :
     natVal (natAddCarry a b c) = natVal a + natVal b + c := by
   induction a, b, c using natAddCarry.induct with
   | case1 c h =>
-    simp only [natAddCarry, natVal]
-    split <;> [simp_all; simp_all; omega]
+    have hc : c = 0 := by simpa using h
+    subst hc
+    simp [natAddCarry]
   | case2 c h =>
-    simp only [natAddCarry, natVal]
-    split <;> simp_all; omega
-  | case3 y ys c ih =>
-    simp only [natAddCarry, natVal]
-    rw [ih]; omega
-  | case4 x xs c ih =>
-    simp only [natAddCarry, natVal]
-    rw [ih]; omega
-  | case5 x xs y ys c ih =>
-    simp only [natAddCarry, natVal]
-    rw [ih]; omega
+    simp [natAddCarry, h]
+  | case3 y ys c s ih =>
+    have hs : s = y + c := rfl
+    simp only [natAddCarry, natVal_cons, natVal_nil]
+    rw [ih]
+    simp only [bigBase, natVal_nil] at *
+    omega
+  | case4 x xs c s ih =>
+    have hs : s = x + c := rfl
+    simp only [natAddCarry, natVal_cons, natVal_nil]
+    rw [ih]
+    simp only [bigBase, natVal_nil] at *
+    omega
+  | case5 x xs y ys c s ih =>
+    simp only [natAddCarry, natVal_cons]
+    rw [ih]
+    simp only [bigBase] at *
+    omega
 
 -- ============================================================================
 -- 4. natAdd correctness
@@ -150,10 +159,12 @@ theorem natMulSmallCarry_val (ds : List Int) (k c : Int) :
   induction ds generalizing c with
   | nil =>
     simp [natMulSmallCarry, natVal]
-    split <;> simp_all; omega
+    split <;> simp_all
   | cons d ds ih =>
-    simp [natMulSmallCarry, natVal]
-    rw [ih]; omega
+    simp only [natMulSmallCarry, natVal_cons]
+    rw [ih]
+    simp only [Int.mul_add, Int.mul_left_comm, Int.mul_comm k d, bigBase] at *
+    omega
 
 def natMulSmall (digits : List Int) (k : Int) : List Int :=
   if k == 0 then [] else natNormalize (natMulSmallCarry digits k 0)
@@ -189,12 +200,12 @@ def shiftLeft (n : Nat) (digits : List Int) : List Int :=
 theorem shiftLeft_val (n : Nat) (ds : List Int) :
     natVal (shiftLeft n ds) = bigBase ^ n * natVal ds := by
   induction n with
-  | zero => simp [shiftLeft, natVal]
+  | zero => simp [shiftLeft]
   | succ k ih =>
-    simp [shiftLeft, List.replicate_succ, List.cons_append, natVal]
-    rw [← shiftLeft, ih]
-    simp [bigBase, pow_succ]
-    omega
+    have hcons : shiftLeft (k + 1) ds = 0 :: shiftLeft k ds := by
+      simp [shiftLeft, List.replicate_succ]
+    rw [hcons, natVal_cons, ih, Int.pow_succ]
+    rw [Int.zero_add, Int.mul_comm (bigBase ^ k) bigBase, Int.mul_assoc]
 
 -- ============================================================================
 -- 8. natMul correctness (sorry — requires ~40 lines of index coordination)
@@ -202,7 +213,7 @@ theorem shiftLeft_val (n : Nat) (ds : List Int) :
 
 theorem natMul_val (a b : List Int) :
     natVal (List.foldl natAdd []
-      (a.enum.map fun (i, ai) =>
+      (a.zipIdx.map fun (ai, i) =>
         if ai == 0 then [] else shiftLeft i (natMulSmall b ai))) =
     natVal a * natVal b := by
   sorry
@@ -231,6 +242,10 @@ def natSubBorrow : List Int → List Int → Int → List Int
 def natSub (a b : List Int) : List Int :=
   natNormalize (natSubBorrow a b 0)
 
+/- FINDING (2026-07-02): statement FALSE as written — no Digit/non-negativity constraint on inputs; a=[], b=[-5], borrow=0 gives 0 ≥ -5 but LHS 0 ≠ RHS 5.
+   Quarantined pending faithful restatement (AGENT_ROADMAP Track A). Machine-
+   checked counterexample reasoning in git history / COVERAGE.md corrections.
+
 theorem natSubBorrow_val (a b : List Int) (borrow : Int) :
     ∀ (hge : natVal a ≥ natVal b + borrow),
     natVal (natSubBorrow a b borrow) = natVal a - natVal b - borrow := by
@@ -258,12 +273,18 @@ theorem natSubBorrow_val (a b : List Int) (borrow : Int) :
       rw [ih2 (by omega)]
       omega
   | case4 _ _ _ => intro hge; simp [natSubBorrow, natVal] at *; omega
+-/
+
+/- FINDING (2026-07-02): statement FALSE as written — false for the same inputs (natSub [] [-5] = [], claim 0 = 5); only elaborated by citing the lemma above.
+   Quarantined pending faithful restatement (AGENT_ROADMAP Track A). Machine-
+   checked counterexample reasoning in git history / COVERAGE.md corrections.
 
 theorem natSub_val (a b : List Int) (hge : natVal a ≥ natVal b) :
     natVal (natSub a b) = natVal a - natVal b := by
   unfold natSub
   rw [natNormalize_val, natSubBorrow_val a b 0 (by omega)]
   simp
+-/
 
 -- ============================================================================
 -- 10. natCompare (sorry — ~80 lines)
@@ -318,7 +339,6 @@ theorem parseUnsigned_step (ds : List Int) (digitCode : Int)
     natVal (natAddSmall (natMulSmall ds 10) digitCode) =
     10 * natVal ds + digitCode := by
   rw [natAddSmall_val, natMulSmall_val]
-  omega
 
 -- ============================================================================
 -- 14. fromString / toString round-trip (sorry — ~200 lines)
