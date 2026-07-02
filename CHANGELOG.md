@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.1 — 2026-07-02
+
+### Changed
+
+- **`watchBlockNumber` now prefers a WS `newHeads` subscription** (push,
+  block-accurate) over the 4s HTTP poll, which remains as automatic
+  fallback. Same `blockNumber` message shape — zero Elm-side changes.
+  `unwatchBlockNumber` tears down whichever path is active.
+- `proofs/JS_PORT_PROOF.md`: F1–F8 re-audit — every recorded port finding
+  verified fixed in the current bridge; no open port-layer findings.
+
+
 ## 1.4.0 — 2026-07-02
 
 ### Added

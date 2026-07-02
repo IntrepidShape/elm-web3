@@ -75,7 +75,7 @@ Legend: ✅ covered · 🟡 partial/via-port-only · ❌ not covered (with verdi
 | Kind | Status | Notes |
 |---|---|---|
 | `eth_subscribe("logs")` | ✅ | `Subscription` (WS, shared socket, re-arm on reconnect; falls back to 4s `eth_getLogs` poll) |
-| `eth_subscribe("newHeads")` | 🟡 | block numbers stream via `watchBlockNumber` **HTTP poll (4s)**, not a WS newHeads sub — same UX, higher latency. **gap (nice-to-have)** |
+| `eth_subscribe("newHeads")` | ✅ | `watchBlockNumber` upgraded (1.4.1): WS newHeads push with automatic 4s-poll fallback; identical message shape, zero Elm changes |
 | `eth_subscribe("newPendingTransactions")` | ❌ | **skip** — mempool streaming is bot territory (swapnsync-class), not dapp UI |
 | Polling filters (`eth_newFilter`/`getFilterChanges`/`uninstallFilter`) | ❌ | **skip** — superseded by getLogs + WS logs sub |
 
@@ -133,7 +133,5 @@ routine reads, both write paths, log streaming, and the full ABI/BigInt/Units
 stack with formal backing. It is **not** an exhaustive JSON-RPC binding — by
 design. The ranked genuine gaps:
 
-1. WS `newHeads` for `watchBlockNumber` (replace 4s poll)
-2. Port F1–F7 re-audit against the current bridge
-3. EIP-5792 batched calls (watch adoption before building; activation
+1. EIP-5792 batched calls (watch adoption before building; activation
    criterion: two major wallets shipping `wallet_sendCalls`)

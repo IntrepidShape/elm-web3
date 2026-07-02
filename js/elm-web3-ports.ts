@@ -394,6 +394,16 @@ export function setupPorts(app, options = {}) {
           const log = msg.params.result
           if (!log) return
           for (const [elmId, sub] of _subscriptions) {
+            if (sub.chainId === chainId && sub.kind === 'head') {
+              // newHeads subscription — emit the same message shape as the
+              // polling path so Elm needs no changes.
+              app.ports.web3Sub.send({
+                tag: 'blockNumber',
+                id: elmId,
+                number: parseInt(log.number, 16),
+              })
+              continue
+            }
             if (sub.chainId === chainId) {
               app.ports.web3Sub.send({
                 tag: 'eventLog',
@@ -429,7 +439,7 @@ export function setupPorts(app, options = {}) {
 
   async function _startEventSubscription(cmd) {
     const params = ['logs', { address: cmd.address, topics: cmd.topics || [] }]
-    _subscriptions.set(cmd.id, { subscribeParams: params, chainId: null })
+    _subscriptions.set(cmd.id, { subscribeParams: params, chainId: null, kind: 'log' })
     try {
       await _ensureWs()
       const chainId = await _wsCall('eth_subscribe', params)
@@ -784,11 +794,23 @@ export function setupPorts(app, options = {}) {
               app.ports.web3Sub.send({ tag: 'blockNumber', id: cmd.id, number: parseInt(hex, 16) })
             } catch (_) {}
           }
-          // Re-issuing under the same id replaces the poller instead of
-          // stacking a second one (F8).
+          // Re-issuing under the same id replaces the watcher (F8).
           if (_blockPollers.has(cmd.id)) clearInterval(_blockPollers.get(cmd.id))
+          _blockPollers.delete(cmd.id)
+          _subscriptions.delete(cmd.id)
+          // Prefer a WS newHeads subscription (push, block-accurate);
+          // fall back to the 4s poll when no WS endpoint is available.
           pollBlock()
-          _blockPollers.set(cmd.id, setInterval(pollBlock, 4000))
+          try {
+            _subscriptions.set(cmd.id, { subscribeParams: ['newHeads'], chainId: null, kind: 'head' })
+            await _ensureWs()
+            const subId = await _wsCall('eth_subscribe', ['newHeads'])
+            const sub = _subscriptions.get(cmd.id)
+            if (sub) sub.chainId = subId
+          } catch (_) {
+            _subscriptions.delete(cmd.id)
+            _blockPollers.set(cmd.id, setInterval(pollBlock, 4000))
+          }
           break
         }
 
@@ -796,6 +818,13 @@ export function setupPorts(app, options = {}) {
           if (_blockPollers.has(cmd.id)) {
             clearInterval(_blockPollers.get(cmd.id))
             _blockPollers.delete(cmd.id)
+          }
+          const sub = _subscriptions.get(cmd.id)
+          if (sub && sub.kind === 'head') {
+            _subscriptions.delete(cmd.id)
+            if (sub.chainId) {
+              try { await _wsCall('eth_unsubscribe', [sub.chainId]) } catch (_) {}
+            }
           }
           break
         }
