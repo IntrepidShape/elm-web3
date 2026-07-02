@@ -57,6 +57,9 @@ below returned to **Proved** the moment the checker agreed:
 | `hexToBytes` decoded bytes are in [0, 255] | `lean/RevertReason.lean` | `hexToBytes_range`, `hexBytePair_val` |
 | UTF-8 ASCII decoding is correct | `lean/RevertReason.lean` | `utf8_ascii_correct` |
 
+| `natSubBorrow_val` / `natSub_val` — subtraction correct for valid digit lists under `≥` | `lean/BigInt.lean` | PROVED 2026-07-02 (restated with digit-validity; structural-induction proof) |
+| `natMul_val` — multiplication correct (`zipIdx` formulation) | `lean/BigInt.lean` | PROVED 2026-07-02 (offset/accumulator-generalizing aux lemma) |
+
 #### FALSE as originally stated — now RESTATED truthfully (2026-07-02)
 
 All three false claims have been restated with faithful hypotheses. The two
@@ -159,26 +162,19 @@ Proved.
 
 ---
 
-## Remaining proof obligations (with sorry, proof sketches provided)
+## Remaining proof obligations
 
-These theorems are stated with correct types and documented proof strategies.
-The sorry markers are temporary scaffolding — each has a complete proof sketch.
-They are **not** counted as Proved. Several of them (`natMul_val`,
-`natCompare_spec`, `natDivMod_spec`) now have a **Property-tested** backstop in
-`tests/BigIntLawsTest.elm` — fuzzed on multi-limb values — which is machine-
-verified evidence, though weaker than a proof.
+| Item | Status |
+|------|--------|
+| `natCompare_spec` | Restated 2026-07-02 over valid **normalized** inputs (the checker refuted the original: `natCompare [5,0] [5] = .gt` with equal values — length-first comparison vs trailing zeros; Elm lists are canonical by construction). Proof pending (`sorry`). |
+| `natDivMod_spec`, `fromString_toString_roundtrip` | **Not yet stated**: the model file carries `True := trivial` placeholders where these theorems belong. Stating them faithfully (then proving) is the work — previously this table implied they were stated-and-pending, which overstated. |
+| `decodeRevertReason_correct` | Stated; proof pending. |
+| `uint256_codec_roundtrip` | Blocked on a real (non-placeholder) BigInt string model inside AbiCodec. |
+| BigInt overflow-safety | Never stated in the model (previously listed here as pending — corrected). |
 
-| Property | File | Proof strategy | Est. lines |
-|----------|------|---------------|------------|
-| `natMul_val`: `natVal (natMul a b) = natVal a * natVal b` | `lean/BigInt.lean` | Induction on `a`; head term + shifted tail; indexedMap/foldl coordination | ~40 |
-| `natCompare_spec`: compare reflects numeric order | `lean/BigInt.lean` | Length → value range lemmas + big-endian lexicographic induction | ~80 |
-| `natDivMod_spec`: satisfies division algorithm property | `lean/BigInt.lean` | `findQd_spec` (binary search) + step invariant + termination | ~150 |
-| `fromString_toString_roundtrip`: round-trip isomorphism | `lean/BigInt.lean` | Decimal string encoding/decoding correspondence via `parseUnsigned_step` | ~200 |
-| `uint256_codec_roundtrip` | `lean/AbiCodec.lean` | Delegates to `fromString_toString_roundtrip` | ~5 |
-| `decodeRevertReason_correct`: full correctness for well-formed payload | `lean/RevertReason.lean` | String take/drop arithmetic + chain hexToInt + hexToBytes + utf8 lemmas | ~100 |
-| `BigInt` overflow safety invariant | `lean/BigInt.lean` | Propagate range bounds through mulSmallCarry; `digit * k + carry ≤ (10^7-1)^2 + (10^7-1) < 2^53` | ~100 |
-
----
+Every entry above has an Elm fuzz backstop in `tests/` — the statements hold
+under machine-checked property testing; the Lean proofs are the outstanding
+stronger evidence.
 
 ## Known limitations of existing proofs
 
