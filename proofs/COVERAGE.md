@@ -64,6 +64,8 @@ below returned to **Proved** the moment the checker agreed:
 | `uint256_codec_roundtrip` — decimal string codec roundtrip over a real self-contained model | `lean/AbiCodec.lean` | PROVED 2026-07-02 |
 | `bigPow_pos` | `lean/Units.lean` | PROVED 2026-07-02 |
 
+| `natCompare_spec` — compare agrees with numeric order on valid normalized lists (all three Ordering outcomes) | `lean/BigInt.lean` | PROVED 2026-07-02 — 9 helper lemmas (positional decomposition, pow bounds, normalized-shape, BE-lex agreement); axiom check clean |
+
 #### FALSE as originally stated — now RESTATED truthfully (2026-07-02)
 
 All three false claims have been restated with faithful hypotheses. The two
@@ -168,16 +170,14 @@ Proved.
 
 ## Remaining proof obligations
 
-| Item | Status |
-|------|--------|
-| `natCompare_spec` | Restated 2026-07-02 over valid **normalized** inputs (the checker refuted the original: `natCompare [5,0] [5] = .gt` with equal values — length-first comparison vs trailing zeros; Elm lists are canonical by construction). Proof pending (`sorry`). |
-| `natDivMod_spec`, `fromString_toString_roundtrip` | **Not yet stated**: the model file carries `True := trivial` placeholders where these theorems belong. Stating them faithfully (then proving) is the work — previously this table implied they were stated-and-pending, which overstated. |
-| BigInt overflow-safety | Never stated in the model (previously listed here as pending — corrected). |
+**None. The proof corpus is sorry-free** (verified: zero `uses sorry`
+warnings across all ten files on the pinned toolchain; enforced in CI).
 
-**Corpus sorry count: 1** (`natCompare_spec`, restated-true). Every entry
-above has an Elm fuzz backstop in `tests/` — the statements hold
-under machine-checked property testing; the Lean proofs are the outstanding
-stronger evidence.
+Future *modeling* work (statements to write, not proofs to finish):
+`natDivMod_spec` and `fromString_toString_roundtrip` exist only as
+`True`-placeholders in the model — stating them faithfully and proving them
+is new work, tracked in the roadmap. Both behaviours hold under Elm fuzz
+(`BigIntLawsTest` division algorithm; `BigIntFuzzTest` round-trips).
 
 ## Known limitations of existing proofs
 

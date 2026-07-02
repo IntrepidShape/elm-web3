@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.4.4 — 2026-07-02
+
+### Verification — the proof corpus is sorry-free
+
+- **`natCompare_spec` PROVED** (restated form, over valid normalized digit
+  lists): nine new helper lemmas — positional decomposition
+  (`natVal_append`), power bounds, normalized-shape, and big-endian
+  lexicographic agreement — close all three Ordering iffs; forward
+  implications by induction, converses free by trichotomy. Axiom check:
+  `propext, Classical.choice, Quot.sound` only.
+- Zero `sorry` warnings across all ten proof files (CI-enforced). Remaining
+  future work is modeling (two statements to write), not proving.
+
+Proofs/docs only.
+
+
 ## 1.4.3 — 2026-07-02
 
 ### Verification — the proof push

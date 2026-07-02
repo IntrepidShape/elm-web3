@@ -337,7 +337,7 @@ theorem natSub_val (a b : List Int)
   simp
 
 -- ============================================================================
--- 10. natCompare (sorry — ~80 lines)
+-- 10. natCompare (DISCHARGED 2026-07-02)
 -- ============================================================================
 
 def natCmpBE : List Int → List Int → Ordering
@@ -355,29 +355,277 @@ def natCompare (a b : List Int) : Ordering :=
   else if la < lb then .lt
   else natCmpBE a.reverse b.reverse
 
-/-- FINDING (2026-07-02): statement FALSE as written — it quantifies over ALL
-digit lists, but `natCompare` decides by length first, so non-normalized
-(trailing-zero) inputs break every component even with valid digits:
-machine-checked counterexample `a = [5,0], b = [5]` (both digits in
-`[0, bigBase)`): `natCompare [5,0] [5] = .gt` yet `natVal [5,0] = 5 = natVal [5]`,
-falsifying `.gt ↔ >` and `.eq ↔ =` (and symmetrically `.lt ↔ <` via `[5]` vs
-`[5,0]`). A truthful restatement needs a no-trailing-zero (normalized)
-hypothesis on both inputs — e.g. `a = natNormalize a ∧ b = natNormalize b`.
-The Elm fuzz backstop passes because Elm BigInt digit lists are canonical by
-construction. Left as sorry pending faithful restatement (statement changes
-are out of scope for this pass). -/
+/-- `bigBase ^ n` is positive. -/
+theorem bigBase_pow_pos (n : Nat) : 0 < bigBase ^ n := by
+  induction n with
+  | zero => decide
+  | succ k ih => rw [Int.pow_succ]; exact Int.mul_pos ih (by decide)
+
+/-- `bigBase ^ ·` is monotone. -/
+theorem bigBase_pow_le {m n : Nat} (h : m ≤ n) : bigBase ^ m ≤ bigBase ^ n := by
+  induction h with
+  | refl => exact Int.le_refl _
+  | @step k _ ih =>
+    rw [Int.pow_succ]
+    calc bigBase ^ m ≤ bigBase ^ k := ih
+      _ = bigBase ^ k * 1 := (Int.mul_one _).symm
+      _ ≤ bigBase ^ k * bigBase :=
+        Int.mul_le_mul_of_nonneg_left (by decide) (Int.le_of_lt (bigBase_pow_pos k))
+
+/-- Positional decomposition of `natVal` across an append. -/
+theorem natVal_append (xs ys : List Int) :
+    natVal (xs ++ ys) = natVal xs + bigBase ^ xs.length * natVal ys := by
+  induction xs with
+  | nil => simp
+  | cons x xs ih =>
+    simp only [List.cons_append, natVal_cons, ih, List.length_cons, Int.pow_succ]
+    rw [Int.mul_add, ← Int.add_assoc, ← Int.mul_assoc,
+        Int.mul_comm bigBase (bigBase ^ xs.length)]
+
+/-- Upper bound: a valid digit list of length `n` denotes less than `bigBase ^ n`. -/
+theorem natVal_lt_pow (xs : List Int) (h : ∀ d ∈ xs, Digit d) :
+    natVal xs < bigBase ^ xs.length := by
+  induction xs with
+  | nil => exact bigBase_pow_pos 0
+  | cons d ds ih =>
+    obtain ⟨hd0, hdB⟩ := h d (by simp)
+    have hds := ih (fun z hz => h z (List.mem_cons_of_mem _ hz))
+    simp only [natVal_cons, List.length_cons, Int.pow_succ]
+    have h1 : bigBase * (natVal ds + 1) ≤ bigBase * bigBase ^ ds.length :=
+      Int.mul_le_mul_of_nonneg_left (by omega) (by decide)
+    rw [Int.mul_add, Int.mul_one] at h1
+    rw [Int.mul_comm (bigBase ^ ds.length) bigBase]
+    omega
+
+/-- Lower bound: a valid digit list whose most-significant digit is nonzero
+denotes at least `bigBase ^ (length - 1)`. -/
+theorem natVal_lower (a : List Int) (e : Int) (rest : List Int)
+    (hrev : a.reverse = e :: rest) (ha : ∀ d ∈ a, Digit d) (he : e ≠ 0) :
+    bigBase ^ (a.length - 1) ≤ natVal a := by
+  have hae : a = rest.reverse ++ [e] := by
+    have h := congrArg List.reverse hrev
+    simpa using h
+  have hlen : a.length = rest.length + 1 := by
+    have h := congrArg List.length hrev
+    simpa using h
+  obtain ⟨he0, _⟩ := ha e (by rw [hae]; exact List.mem_append_right _ (by simp))
+  have hmul : bigBase ^ rest.length * 1 ≤ bigBase ^ rest.length * e :=
+    Int.mul_le_mul_of_nonneg_left (by omega)
+      (Int.le_of_lt (bigBase_pow_pos rest.length))
+  rw [Int.mul_one] at hmul
+  have h0 : 0 ≤ natVal rest.reverse :=
+    natVal_nonneg _ (fun d hd => ha d (by rw [hae]; exact List.mem_append_left _ hd))
+  have hval : natVal a = natVal rest.reverse + bigBase ^ rest.length * e := by
+    rw [hae, natVal_append, List.length_reverse]
+    simp
+  have hlen1 : a.length - 1 = rest.length := by omega
+  rw [hval, hlen1]
+  omega
+
+/-- `natNormalize` never lengthens a list. -/
+theorem natNormalize_length_le (ds : List Int) :
+    (natNormalize ds).length ≤ ds.length := by
+  induction ds using natNormalize.induct with
+  | case1 x h =>
+    have hx : x = [] := List.reverse_eq_nil_iff.mp h
+    subst hx
+    rw [natNormalize.eq_def]
+    exact Nat.le_refl _
+  | case2 x rest h ih =>
+    have hstep : natNormalize x = natNormalize rest.reverse := by
+      rw [natNormalize.eq_def]
+      split
+      · next heq => rw [heq] at h; cases h
+      · next r heq => rw [heq] at h; cases h; rfl
+      · next h1 h2 => exact absurd h (h2 rest)
+    rw [hstep]
+    have hlx : x.length = rest.length + 1 := by
+      have hl := congrArg List.length h
+      simpa using hl
+    have hlr : rest.reverse.length = rest.length := List.length_reverse
+    omega
+  | case3 x h1 h2 =>
+    have hstep : natNormalize x = x := by
+      rw [natNormalize.eq_def]
+      split
+      · next heq => exact absurd heq h1
+      · next r heq => exact absurd heq (h2 r)
+      · rfl
+    rw [hstep]
+    exact Nat.le_refl _
+
+/-- A normalized list is empty or its most-significant digit is nonzero. -/
+theorem normalized_shape (ds : List Int) (h : natNormalize ds = ds) :
+    ds = [] ∨ ∃ e rest, ds.reverse = e :: rest ∧ e ≠ 0 := by
+  cases hrev : ds.reverse with
+  | nil => exact .inl (List.reverse_eq_nil_iff.mp hrev)
+  | cons e rest =>
+    by_cases he : e = 0
+    · subst he
+      exfalso
+      have hstep : natNormalize ds = natNormalize rest.reverse := by
+        rw [natNormalize.eq_def]
+        split
+        · next heq => rw [heq] at hrev; cases hrev
+        · next r heq => rw [heq] at hrev; cases hrev; rfl
+        · next h1 h2 => exact absurd hrev (h2 rest)
+      have hlen := natNormalize_length_le rest.reverse
+      rw [h] at hstep
+      rw [← hstep] at hlen
+      have hds : ds.length = rest.length + 1 := by
+        have hl := congrArg List.length hrev
+        simpa using hl
+      have hlr : rest.reverse.length = rest.length := List.length_reverse
+      omega
+    · exact .inr ⟨e, rest, rfl, he⟩
+
+/-- Big-endian lexicographic comparison of equal-length valid digit lists
+agrees with the value order of their (little-endian) reversals. -/
+theorem natCmpBE_val (xs ys : List Int) (hlen : xs.length = ys.length)
+    (hx : ∀ d ∈ xs, Digit d) (hy : ∀ d ∈ ys, Digit d) :
+    (natCmpBE xs ys = .lt → natVal xs.reverse < natVal ys.reverse) ∧
+    (natCmpBE xs ys = .gt → natVal ys.reverse < natVal xs.reverse) ∧
+    (natCmpBE xs ys = .eq → natVal xs.reverse = natVal ys.reverse) := by
+  induction xs generalizing ys with
+  | nil =>
+    cases ys with
+    | nil =>
+      exact ⟨fun h => by simp [natCmpBE] at h,
+             fun h => by simp [natCmpBE] at h,
+             fun _ => rfl⟩
+    | cons y ys => simp at hlen
+  | cons x xs ih =>
+    cases ys with
+    | nil => simp at hlen
+    | cons y ys =>
+      have hlen' : xs.length = ys.length := by simpa using hlen
+      have hx' : ∀ d ∈ xs, Digit d := fun d hd => hx d (List.mem_cons_of_mem _ hd)
+      have hy' : ∀ d ∈ ys, Digit d := fun d hd => hy d (List.mem_cons_of_mem _ hd)
+      obtain ⟨hx0, hxB⟩ := hx x (by simp)
+      obtain ⟨hy0, hyB⟩ := hy y (by simp)
+      have hU0 : 0 ≤ natVal xs.reverse :=
+        natVal_nonneg _ (fun d hd => hx' d (List.mem_reverse.mp hd))
+      have hV0 : 0 ≤ natVal ys.reverse :=
+        natVal_nonneg _ (fun d hd => hy' d (List.mem_reverse.mp hd))
+      have hUb : natVal xs.reverse < bigBase ^ ys.length := by
+        have hb := natVal_lt_pow xs.reverse (fun d hd => hx' d (List.mem_reverse.mp hd))
+        rwa [List.length_reverse, hlen'] at hb
+      have hVb : natVal ys.reverse < bigBase ^ ys.length := by
+        have hb := natVal_lt_pow ys.reverse (fun d hd => hy' d (List.mem_reverse.mp hd))
+        rwa [List.length_reverse] at hb
+      have hva : natVal (x :: xs).reverse =
+          natVal xs.reverse + bigBase ^ ys.length * x := by
+        rw [List.reverse_cons, natVal_append, List.length_reverse, hlen']
+        simp
+      have hvb : natVal (y :: ys).reverse =
+          natVal ys.reverse + bigBase ^ ys.length * y := by
+        rw [List.reverse_cons, natVal_append, List.length_reverse]
+        simp
+      rw [hva, hvb]
+      have hp : (0 : Int) < bigBase ^ ys.length := bigBase_pow_pos _
+      by_cases hgt : x > y
+      · have hcmp : natCmpBE (x :: xs) (y :: ys) = .gt := by
+          simp [natCmpBE, hgt]
+        rw [hcmp]
+        have hm : bigBase ^ ys.length * (y + 1) ≤ bigBase ^ ys.length * x :=
+          Int.mul_le_mul_of_nonneg_left (by omega) (Int.le_of_lt hp)
+        rw [Int.mul_add, Int.mul_one] at hm
+        exact ⟨fun h => Ordering.noConfusion h,
+               fun _ => by omega,
+               fun h => Ordering.noConfusion h⟩
+      · by_cases hlt : x < y
+        · have hcmp : natCmpBE (x :: xs) (y :: ys) = .lt := by
+            simp [natCmpBE, hgt, hlt]
+          rw [hcmp]
+          have hm : bigBase ^ ys.length * (x + 1) ≤ bigBase ^ ys.length * y :=
+            Int.mul_le_mul_of_nonneg_left (by omega) (Int.le_of_lt hp)
+          rw [Int.mul_add, Int.mul_one] at hm
+          exact ⟨fun _ => by omega,
+                 fun h => Ordering.noConfusion h,
+                 fun h => Ordering.noConfusion h⟩
+        · have hxy : x = y := by omega
+          have hcmp : natCmpBE (x :: xs) (y :: ys) = natCmpBE xs ys := by
+            simp [natCmpBE, hgt, hlt]
+          obtain ⟨ih1, ih2, ih3⟩ := ih ys hlen' hx' hy'
+          rw [hcmp, hxy]
+          exact ⟨fun h => by have := ih1 h; omega,
+                 fun h => by have := ih2 h; omega,
+                 fun h => by have := ih3 h; omega⟩
+
+/-- Forward directions of `natCompare_spec`. -/
+theorem natCompare_val (a b : List Int)
+    (ha : ∀ x ∈ a, Digit x) (hb : ∀ y ∈ b, Digit y)
+    (hna : natNormalize a = a) (hnb : natNormalize b = b) :
+    (natCompare a b = .lt → natVal a < natVal b) ∧
+    (natCompare a b = .gt → natVal b < natVal a) ∧
+    (natCompare a b = .eq → natVal a = natVal b) := by
+  by_cases h1 : a.length > b.length
+  · have hcmp : natCompare a b = .gt := by
+      simp [natCompare, h1]
+    have hval : natVal b < natVal a := by
+      rcases normalized_shape a hna with rfl | ⟨e, rest, hrev, he⟩
+      · simp at h1
+      · have hlow := natVal_lower a e rest hrev ha he
+        have hupp := natVal_lt_pow b hb
+        have hmono : bigBase ^ b.length ≤ bigBase ^ (a.length - 1) :=
+          bigBase_pow_le (by omega)
+        omega
+    rw [hcmp]
+    exact ⟨fun h => Ordering.noConfusion h,
+           fun _ => hval,
+           fun h => Ordering.noConfusion h⟩
+  · by_cases h2 : a.length < b.length
+    · have hcmp : natCompare a b = .lt := by
+        simp [natCompare, h1, h2]
+      have hval : natVal a < natVal b := by
+        rcases normalized_shape b hnb with rfl | ⟨e, rest, hrev, he⟩
+        · simp at h2
+        · have hlow := natVal_lower b e rest hrev hb he
+          have hupp := natVal_lt_pow a ha
+          have hmono : bigBase ^ a.length ≤ bigBase ^ (b.length - 1) :=
+            bigBase_pow_le (by omega)
+          omega
+      rw [hcmp]
+      exact ⟨fun _ => hval,
+             fun h => Ordering.noConfusion h,
+             fun h => Ordering.noConfusion h⟩
+    · have hlen : a.length = b.length := by omega
+      have hcmp : natCompare a b = natCmpBE a.reverse b.reverse := by
+        simp [natCompare, h1, h2]
+      obtain ⟨c1, c2, c3⟩ := natCmpBE_val a.reverse b.reverse
+        (by simp [hlen])
+        (fun d hd => ha d (List.mem_reverse.mp hd))
+        (fun d hd => hb d (List.mem_reverse.mp hd))
+      rw [List.reverse_reverse, List.reverse_reverse] at c1 c2 c3
+      rw [hcmp]
+      exact ⟨c1, c2, c3⟩
+
+/-- natCompare over valid, NORMALIZED digit lists agrees with natVal order on
+all three Ordering outcomes. Normalization is required because natCompare
+decides by length first: un-normalized inputs (trailing zeros: `[5,0]` vs
+`[5]`) falsify the statement (machine-checked counterexample 2026-07-02).
+Elm digit lists are canonical by construction (`natNormalize` is applied at
+every producer). DISCHARGED 2026-07-02. -/
 theorem natCompare_spec (a b : List Int)
     (ha : ∀ x ∈ a, Digit x) (hb : ∀ y ∈ b, Digit y)
     (hna : natNormalize a = a) (hnb : natNormalize b = b) :
     (natCompare a b = .lt ↔ natVal a < natVal b) ∧
     (natCompare a b = .gt ↔ natVal a > natVal b) ∧
     (natCompare a b = .eq ↔ natVal a = natVal b) := by
-  -- RESTATED 2026-07-02: the original quantified over all digit lists, but
-  -- natCompare decides by length first, so un-normalized inputs (trailing
-  -- zeros: [5,0] vs [5]) falsify it. Elm digit lists are canonical by
-  -- construction (natNormalize is applied at every producer), so the honest
-  -- statement is over valid, normalized inputs. Proof pending.
-  sorry
+  obtain ⟨f1, f2, f3⟩ := natCompare_val a b ha hb hna hnb
+  refine ⟨⟨f1, fun hv => ?_⟩, ⟨f2, fun hv => ?_⟩, ⟨f3, fun hv => ?_⟩⟩
+  · cases hc : natCompare a b with
+    | lt => rfl
+    | eq => exact absurd (f3 hc) (by omega)
+    | gt => exact absurd (f2 hc) (by omega)
+  · cases hc : natCompare a b with
+    | lt => exact absurd (f1 hc) (by omega)
+    | eq => exact absurd (f3 hc) (by omega)
+    | gt => rfl
+  · cases hc : natCompare a b with
+    | lt => exact absurd (f1 hc) (by omega)
+    | eq => rfl
+    | gt => exact absurd (f2 hc) (by omega)
 
 -- ============================================================================
 -- 11. natDivMod (sorry — ~150 lines)
@@ -434,11 +682,14 @@ theorem fromString_toString_roundtrip_statement : True := trivial
 8. natSubBorrow_val, natSub_val (discharged 2026-07-02)
 9. natMul_val (discharged 2026-07-02 via natMul_aux)
 10. parseUnsigned_step
+11. natCompare_spec (discharged 2026-07-02, over valid NORMALIZED inputs;
+    helpers: bigBase_pow_pos, bigBase_pow_le, natVal_append, natVal_lt_pow,
+    natVal_lower, natNormalize_length_le, normalized_shape, natCmpBE_val,
+    natCompare_val)
 
 ## Sorry
 
-11. natCompare_spec — statement FALSE as written (machine-checked
-    counterexample above); needs a normalized-input restatement first.
+(none — corpus is sorry-free)
 
 ## Placeholders (True := trivial, no obligation stated yet)
 
