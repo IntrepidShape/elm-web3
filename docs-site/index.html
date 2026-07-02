@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>elm-web3 — what is actually proved</title>
+<meta name="description" content="Machine-checked claims about elm-web3: Lean 4 proofs, TLC-verified TLA+ state machines, fuzz properties — and the three times the machines caught us.">
+<link rel="stylesheet" href="proofs.css">
+</head>
+<body>
+<main class="page">
+
+<header class="hero">
+  <p class="hero__kicker">intrepidshape/elm-web3</p>
+  <h1>What is actually proved</h1>
+  <p class="hero__lead">
+    Most libraries tell you they are correct. This one shows you the machine
+    output. Every claim below is graded by what a checker did — not by what a
+    document says — and the ledger at the bottom records the three times our
+    own machines caught us claiming too much.
+  </p>
+  <nav class="hero__links">
+    <a href="https://package.elm-lang.org/packages/intrepidshape/elm-web3/latest/">package</a>
+    <a href="https://github.com/IntrepidShape/elm-web3">source</a>
+    <a href="https://github.com/IntrepidShape/elm-web3/blob/master/proofs/COVERAGE.md">coverage ledger</a>
+    <a href="https://intrepidshape.github.io/elm-web3-ui/">ui gallery</a>
+  </nav>
+</header>
+
+<!-- ═══════════════════ THE STACK ═══════════════════ -->
+<section class="sec">
+  <h2>Four checkers, one honest ledger</h2>
+  <p>
+    A claim earns its grade from the strongest machine that has actually
+    verified it. A Lean proof that does not compile is not a proof; a TLA+
+    property absent from the model-checker's config was never checked; a test
+    that never ran is a comment. The grades, strongest first:
+  </p>
+
+  <figure class="fig">
+    <svg viewBox="0 0 760 150" role="img" aria-label="The verification stack: Lean 4 proofs, TLC model checking, elm-test fuzzing, and the rendered gallery, all feeding one coverage ledger">
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="#5a6572"/>
+        </marker>
+      </defs>
+      <g class="stacknode"><rect x="8"   y="18" width="168" height="54" rx="10"/><text x="92"  y="40">Lean 4</text><text x="92" y="58" class="sub">theorems · unbounded</text></g>
+      <g class="stacknode"><rect x="200" y="18" width="168" height="54" rx="10"/><text x="284" y="40">TLC</text><text x="284" y="58" class="sub">state machines · bounded</text></g>
+      <g class="stacknode"><rect x="392" y="18" width="168" height="54" rx="10"/><text x="476" y="40">elm-test</text><text x="476" y="58" class="sub">fuzz · 100 cases/run</text></g>
+      <g class="stacknode"><rect x="584" y="18" width="168" height="54" rx="10"/><text x="668" y="40">gallery</text><text x="668" y="58" class="sub">rendered reality</text></g>
+      <path d="M92 72 L92 100 L664 100 L664 72" fill="none" class="wire"/>
+      <path d="M284 72 L284 100" fill="none" class="wire"/>
+      <path d="M476 72 L476 100" fill="none" class="wire"/>
+      <path d="M380 100 L380 118" fill="none" class="wire" marker-end="url(#arr)"/>
+      <g class="ledger"><rect x="255" y="120" width="250" height="26" rx="6"/><text x="380" y="137">proofs/COVERAGE.md — the ledger</text></g>
+    </svg>
+    <figcaption>Each checker runs in CI on every pull request. The ledger records only what they report.</figcaption>
+  </figure>
+
+  <p>
+    The fourth checker earns its place. In one page-load the
+    <a href="https://intrepidshape.github.io/elm-web3-ui/">gallery</a> caught
+    two shipped bugs that proofs, model checking, and fuzzing had all missed —
+    because a pixel has no respect for an internally consistent mistake.
+  </p>
+</section>
+
+<!-- ═══════════════════ COVERAGE CHART ═══════════════════ -->
+<section class="sec">
+  <h2>The coverage, counted</h2>
+  <p>
+    Every invariant in the ledger, bucketed by the strongest verification it
+    has actually received. No bucket borrows from a stronger one: "authored"
+    means a proof exists as text and does not currently compile, so it counts
+    for nothing.
+  </p>
+  <figure class="fig">
+    <svg viewBox="0 0 760 210" role="img" aria-label="Bar chart of verification coverage by grade" id="coverage-chart">
+      <!-- values injected at build-audit time; keep in sync with COVERAGE.md -->
+      <g class="bar bar--proved"><rect x="170" y="18"  height="26" width="90"/><text x="12" y="36" class="bar__label">Proved (Lean)</text><text x="270" y="36" class="bar__n">9</text></g>
+      <g class="bar bar--tlc">   <rect x="170" y="56"  height="26" width="140"/><text x="12" y="74" class="bar__label">Model-checked (TLC)</text><text x="320" y="74" class="bar__n">14</text></g>
+      <g class="bar bar--fuzz">  <rect x="170" y="94"  height="26" width="310"/><text x="12" y="112" class="bar__label">Property-tested (fuzz)</text><text x="490" y="112" class="bar__n">31</text></g>
+      <g class="bar bar--auth">  <rect x="170" y="132" height="26" width="150"/><text x="12" y="150" class="bar__label">Authored, unverified</text><text x="330" y="150" class="bar__n">15</text></g>
+      <g class="bar bar--sorry"> <rect x="170" y="170" height="26" width="70"/><text x="12" y="188" class="bar__label">Open obligations</text><text x="250" y="188" class="bar__n">7</text></g>
+    </svg>
+    <figcaption>
+      Counts as of 2026-07-02, after the first local Lean run downgraded
+      fifteen rows from "Proved" to "authored" — see the ledger below.
+      Repair is in progress; this chart moves only when the checker's exit code does.
+    </figcaption>
+  </figure>
+</section>
+
+<!-- ═══════════════════ STATE MACHINES ═══════════════════ -->
+<section class="sec">
+  <h2>The state machines, drawn from the specs</h2>
+  <p>
+    Four state machines run every dapp built on this stack. Each diagram below
+    is drawn from its TLA+ specification, and every labelled invariant is one
+    that TLC verified over the full reachable state space of the model. The
+    same guards exist in the Elm code — the conformance audit maps every
+    <code>update</code> branch to its spec action, one to one.
+  </p>
+
+  <figure class="fig">
+    <h3>Wallet <span class="fig__file">WalletSpec.tla · Web3.Wallet</span></h3>
+    <svg viewBox="0 0 760 300" role="img" aria-label="Wallet state machine diagram">
+      <defs>
+        <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="#5a6572"/>
+        </marker>
+      </defs>
+      <!-- nodes -->
+      <g class="st st--rest"><rect x="20"  y="120" width="130" height="40" rx="20"/><text x="85"  y="145">Disconnected</text></g>
+      <g class="st">         <rect x="210" y="40"  width="120" height="40" rx="20"/><text x="270" y="65">Connecting</text></g>
+      <g class="st st--ok">  <rect x="420" y="40"  width="120" height="40" rx="20"/><text x="480" y="65">Connected</text></g>
+      <g class="st st--warn"><rect x="420" y="150" width="120" height="40" rx="20"/><text x="480" y="175">WrongChain</text></g>
+      <g class="st st--rest"><rect x="210" y="230" width="120" height="40" rx="20"/><text x="270" y="255">ReadOnly</text></g>
+      <g class="st st--bad"> <rect x="620" y="230" width="100" height="40" rx="20"/><text x="670" y="255">Error</text></g>
+      <!-- edges -->
+      <path class="e" d="M110 120 C140 85 165 70 205 62" marker-end="url(#a2)"/><text class="el" x="130" y="78">connect</text>
+      <path class="e" d="M330 55 C360 52 385 52 415 55" marker-end="url(#a2)"/><text class="el" x="372" y="44">expected chain</text>
+      <path class="e" d="M320 80 C355 100 390 125 425 148" marker-end="url(#a2)"/><text class="el" x="322" y="136">wrong chain</text>
+      <path class="e" d="M462 85 C452 105 452 125 460 145" marker-end="url(#a2)"/><text class="el el--r" x="429" y="106">chainChanged ✕</text>
+      <path class="e" d="M500 145 C508 125 508 105 498 85" marker-end="url(#a2)"/><text class="el" x="560" y="122">chainChanged ✓</text>
+      <path class="e" d="M85 160 C110 210 160 240 205 250" marker-end="url(#a2)"/><text class="el" x="96" y="212">readOnly</text>
+      <path class="e" d="M330 240 C370 200 400 90 418 78" marker-end="url(#a2)"/><text class="el" x="352" y="185">walletConnected</text>
+      <path class="e" d="M418 55 C300 20 130 55 92 116" marker-end="url(#a2)"/><text class="el" x="212" y="26">disconnect</text>
+      <path class="e" d="M545 180 C580 200 610 218 618 228" marker-end="url(#a2)"/><text class="el" x="560" y="216">walletError</text>
+      <path class="e" d="M620 250 C450 290 170 250 120 162" marker-end="url(#a2)"/><text class="el" x="330" y="283">disconnect (recovery)</text>
+      <!-- invariant callouts -->
+    </svg>
+    <figcaption>
+      TLC verified: <em>Connected/WrongChain always carry an address and
+      chain · a session always returns to a resting state (Disconnected or
+      ReadOnly) · Connected exits only to WrongChain, Disconnected, or Error ·
+      ReadOnly exits only via a wallet announcement.</em>
+      The ✓ edge is the 1.2.1 fix — before it, a user who fixed their chain
+      by hand stayed stuck in WrongChain forever.
+    </figcaption>
+  </figure>
+
+  <figure class="fig">
+    <h3>Transaction <span class="fig__file">TransactionSpec.tla · Web3.Transaction</span></h3>
+    <svg viewBox="0 0 760 250" role="img" aria-label="Transaction lifecycle state machine diagram">
+      <g class="st st--rest"><rect x="20"  y="40" width="90"  height="40" rx="20"/><text x="65"  y="65">Idle</text></g>
+      <g class="st">         <rect x="150" y="40" width="170" height="40" rx="20"/><text x="235" y="65">AwaitingSignature</text></g>
+      <g class="st">         <rect x="360" y="40" width="120" height="40" rx="20"/><text x="420" y="65">Submitted</text></g>
+      <g class="st">         <rect x="520" y="40" width="130" height="40" rx="20"/><text x="585" y="65">Confirming n</text></g>
+      <g class="st st--ok">  <rect x="600" y="150" width="120" height="40" rx="20"/><text x="660" y="175">Confirmed</text></g>
+      <g class="st st--bad"> <rect x="330" y="150" width="100" height="40" rx="20"/><text x="380" y="175">Failed</text></g>
+      <g class="st st--warn"><rect x="150" y="150" width="110" height="40" rx="20"/><text x="205" y="175">Rejected</text></g>
+      <path class="e" d="M110 60 L145 60" marker-end="url(#a2)"/><text class="el" x="127" y="50">send</text>
+      <path class="e" d="M320 60 L355 60" marker-end="url(#a2)"/><text class="el" x="338" y="50">hash</text>
+      <path class="e" d="M480 60 L515 60" marker-end="url(#a2)"/><text class="el" x="497" y="50">conf</text>
+      <path class="e e--loop" d="M570 40 C560 12 610 12 600 40" marker-end="url(#a2)"/><text class="el" x="585" y="12">n′ &gt; n only</text>
+      <path class="e" d="M600 80 C615 105 635 125 655 145" marker-end="url(#a2)"/><text class="el" x="642" y="112">receipt</text>
+      <path class="e" d="M235 80 C220 105 212 125 207 145" marker-end="url(#a2)"/><text class="el el--r" x="160" y="112">reject</text>
+      <path class="e" d="M300 80 C325 105 350 125 368 145" marker-end="url(#a2)"/><text class="el" x="290" y="118">fail</text>
+      <path class="e" d="M660 190 C600 235 200 240 70 84" marker-end="url(#a2)"/><text class="el" x="360" y="228">TxReset — the only exit from any terminal</text>
+    </svg>
+    <figcaption>
+      TLC verified: <em>no port message moves a terminal state · Submitted is
+      reachable only from AwaitingSignature · Confirming always carries a
+      valid hash · the confirmation count strictly increases · every pending
+      transaction eventually terminates.</em>
+      The n′&nbsp;&gt;&nbsp;n guard is the 1.2.1 fix: before it, a stale port
+      message could run the counter backwards. Failure edges drawn once for
+      legibility — every non-terminal state has one.
+    </figcaption>
+  </figure>
+
+  <figure class="fig">
+    <h3>Sign <span class="fig__file">SignSpec.tla · Web3.Sign</span></h3>
+    <svg viewBox="0 0 760 210" role="img" aria-label="Signing state machine diagram">
+      <g class="st st--rest"><rect x="30"  y="80" width="110" height="40" rx="20"/><text x="85"  y="105">SignIdle</text></g>
+      <g class="st">         <rect x="230" y="80" width="150" height="40" rx="20"/><text x="305" y="105">SignPending id</text></g>
+      <g class="st st--ok">  <rect x="520" y="20" width="110" height="40" rx="20"/><text x="575" y="45">Signed</text></g>
+      <g class="st st--bad"> <rect x="520" y="85" width="110" height="40" rx="20"/><text x="575" y="110">SignFailed</text></g>
+      <g class="st st--warn"><rect x="520" y="150" width="130" height="40" rx="20"/><text x="585" y="175">SignRejected</text></g>
+      <path class="e" d="M140 100 L225 100" marker-end="url(#a2)"/><text class="el" x="182" y="90">startSign id</text>
+      <path class="e" d="M380 88 C430 70 470 52 515 42" marker-end="url(#a2)"/><text class="el" x="435" y="52">signed (id ✓)</text>
+      <path class="e" d="M380 102 L515 104" marker-end="url(#a2)"/><text class="el" x="447" y="94">failed (id ✓)</text>
+      <path class="e" d="M380 112 C430 130 470 150 515 162" marker-end="url(#a2)"/><text class="el" x="428" y="152">cancel (id ✓)</text>
+      <path class="e e--loop" d="M290 80 C280 50 330 50 320 80" marker-end="url(#a2)"/><text class="el el--r" x="305" y="48">other id — dropped</text>
+    </svg>
+    <figcaption>
+      TLC verified: <em>terminal states absorb · every terminal state was
+      entered from SignPending · a response for a different correlation id
+      never completes the pending signature.</em> Run the spec's
+      <code>UnguardedSpec</code> and TLC shows that last property breaking —
+      the id guard is load-bearing, not decorative.
+    </figcaption>
+  </figure>
+
+  <figure class="fig">
+    <h3>ApprovalFlow <span class="fig__file">ApprovalSpec.tla · Web3.Ui.ApprovalFlow</span></h3>
+    <svg viewBox="0 0 760 300" role="img" aria-label="Approve-then-act state machine diagram">
+      <g class="st">         <rect x="20"  y="120" width="190" height="40" rx="20"/><text x="115" y="145">CheckingAllowance</text></g>
+      <g class="st st--warn"><rect x="300" y="40"  width="160" height="40" rx="20"/><text x="380" y="65">ApprovalNeeded</text></g>
+      <g class="st">         <rect x="540" y="40"  width="120" height="40" rx="20"/><text x="600" y="65">Approving</text></g>
+      <g class="st st--ok">  <rect x="300" y="200" width="130" height="40" rx="20"/><text x="365" y="225">ReadyToAct</text></g>
+      <g class="st">         <rect x="510" y="200" width="100" height="40" rx="20"/><text x="560" y="225">Acting</text></g>
+      <g class="st st--ok">  <rect x="650" y="255" width="110" height="40" rx="20"/><text x="705" y="280">Completed</text></g>
+      <g class="st st--bad"> <rect x="90"  y="245" width="100" height="40" rx="20"/><text x="140" y="270">Blocked</text></g>
+      <path class="e" d="M170 120 C215 95 255 75 295 62" marker-end="url(#a2)"/><text class="el" x="195" y="84">allowance &lt; needed</text>
+      <path class="e" d="M180 160 C220 180 255 195 295 210" marker-end="url(#a2)"/><text class="el" x="192" y="196">allowance ✓</text>
+      <path class="e" d="M460 60 L535 60" marker-end="url(#a2)"/><text class="el" x="497" y="50">approve</text>
+      <path class="e" d="M540 42 C400 -8 160 40 118 116" marker-end="url(#a2)"/><text class="el" x="300" y="16">confirmed → re-check on-chain</text>
+      <path class="e" d="M535 78 C505 88 495 78 465 70" marker-end="url(#a2)"/><text class="el el--r" x="500" y="94">rejected</text>
+      <path class="e" d="M430 220 L505 220" marker-end="url(#a2)"/><text class="el" x="467" y="210">act</text>
+      <path class="e" d="M610 230 C625 240 640 250 648 258" marker-end="url(#a2)"/><text class="el" x="608" y="252">receipt</text>
+      <path class="e" d="M510 235 C480 250 460 245 432 232" marker-end="url(#a2)"/><text class="el el--r" x="468" y="252">rejected</text>
+      <path class="e" d="M125 240 C118 215 115 190 115 164" marker-end="url(#a2)"/><text class="el" x="52" y="205">retry</text>
+    </svg>
+    <figcaption>
+      TLC verified: <em>Acting is unreachable without a verified allowance ·
+      Completed comes only from a confirmed action and absorbs · a confirmed
+      approval re-reads the chain rather than trusting itself</em> (tokens
+      lie; the chain doesn't). The same invariants hold under fuzzing in
+      <code>ApprovalFlowTest</code>. Failure edges to Blocked omitted for
+      legibility — every in-flight state has one.
+    </figcaption>
+  </figure>
+</section>
+
+<!-- ═══════════════════ THE LEDGER ═══════════════════ -->
+<section class="sec sec--ledger">
+  <h2>Three times the machines caught us</h2>
+  <p>
+    A verification story you should trust will include the failures. Ours has
+    three, each found by finally making a machine touch a claim that had only
+    ever lived in prose.
+  </p>
+  <ol class="ledgerlist">
+    <li>
+      <strong>The TLA+ specs had never parsed.</strong> The coverage doc said
+      "model-checked by TLC"; the first real TLC run rejected every file on
+      syntax. Fixing the syntax surfaced three genuine state-machine bugs in
+      the Elm — all fixed in 1.2.1, and TLC now runs in CI so the claim can
+      never silently rot again.
+    </li>
+    <li>
+      <strong>The Lean proofs verified a typo.</strong>
+      <code>decodeRevertReason</code> compared reverts against selector
+      <code>08c379a2</code>; the real <code>Error(string)</code> selector is
+      <code>08c379a0</code>. The proofs were sound — about the wrong constant —
+      so no real revert reason ever decoded. A rendered payload in the gallery
+      exposed it in one frame; fixed in 1.2.2 and pinned by canonical solc
+      vectors. Proofs guarantee internal consistency; constants that point at
+      the world need oracle tests against the world.
+    </li>
+    <li>
+      <strong>Seven of ten Lean files had never compiled.</strong> The first
+      local <code>lean</code> run (2026-07-02) checked three files clean and
+      rejected seven with 86 errors. Fifteen "Proved" rows were downgraded to
+      "authored, unverified" the same hour, and are promoted back one file at
+      a time as the checker — not the author — says so.
+    </li>
+  </ol>
+  <p>
+    The pattern is the point: every grade in the
+    <a href="https://github.com/IntrepidShape/elm-web3/blob/master/proofs/COVERAGE.md">ledger</a>
+    is now backed by a command you can run and CI re-runs on every change.
+  </p>
+</section>
+
+<footer class="foot">
+  <p>
+    <a href="https://github.com/IntrepidShape/elm-web3/blob/master/proofs/TLA_CONFORMANCE.md">spec↔code conformance audit</a> ·
+    <a href="https://github.com/IntrepidShape/elm-web3/blob/master/proofs/EVM_API_COVERAGE.md">EVM API coverage</a> ·
+    <a href="https://github.com/IntrepidShape/elm-web3-ui/blob/master/PRIMITIVES.md">UI primitive taxonomy</a> ·
+    <a href="https://intrepidshape.github.io/elm-web3-ui/">live gallery</a>
+  </p>
+  <p class="foot__made">Made by <a href="https://intrepiddev.com.au">Intrepid Development</a>. No JavaScript on this page — view source.</p>
+</footer>
+
+</main>
+</body>
+</html>

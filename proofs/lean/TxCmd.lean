@@ -115,13 +115,16 @@ theorem decode_encode_roundtrip (cmd : TxCmd) :
 
 theorem encode_injective : Function.Injective encodeTxCmd := by
   intro c₁ c₂ h
-  cases c₁ <;> cases c₂
-  · -- Both RequestReceipt
-    simp [encodeTxCmd] at h
-    obtain ⟨hhash, hid⟩ := h
-    congr 1
-    · cases ‹TxHash› with | mk v => exact congrArg TxHash.mk hhash
-    · exact hid
+  cases c₁ with
+  | RequestReceipt h₁ i₁ =>
+    cases c₂ with
+    | RequestReceipt h₂ i₂ =>
+      cases h₁ with
+      | mk v₁ =>
+        cases h₂ with
+        | mk v₂ =>
+          simp [encodeTxCmd] at h
+          simp_all
 
 -- ============================================================================
 -- 10. PROOF: Decode consistency (partial inverse)
@@ -146,7 +149,7 @@ theorem encode_decode_partial_inverse (j : JsonValue) (cmd : TxCmd)
   is always ≥ 0. Proves the guarding `max 0` is correct.
 -/
 theorem transactionConfirmations_nonneg (currentBlock blockNumber : Int) :
-    Int.max 0 (currentBlock - blockNumber) ≥ 0 := by
+    max 0 (currentBlock - blockNumber) ≥ 0 := by
   omega
 
 /--
@@ -154,7 +157,7 @@ theorem transactionConfirmations_nonneg (currentBlock blockNumber : Int) :
 -/
 theorem transactionConfirmations_eq (currentBlock blockNumber : Int)
     (h : currentBlock ≥ blockNumber) :
-    Int.max 0 (currentBlock - blockNumber) = currentBlock - blockNumber := by
+    max 0 (currentBlock - blockNumber) = currentBlock - blockNumber := by
   omega
 
 /-!

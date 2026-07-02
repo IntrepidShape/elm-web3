@@ -134,15 +134,15 @@ theorem startSign_terminal_unchanged (id : String) (s : SignState)
 
 theorem signUpdate_response_match (id sig : String) :
     signUpdate (.SignResponse id sig) (.SignPending id) = .Signed id sig := by
-  simp [signUpdate, isSignTerminal, signUpdateNonTerminal, beq_self_eq_true]
+  simp [signUpdate, isSignTerminal, signUpdateNonTerminal]
 
 theorem signUpdate_error_match (id err : String) :
     signUpdate (.SignError id err) (.SignPending id) = .SignFailed id err := by
-  simp [signUpdate, isSignTerminal, signUpdateNonTerminal, beq_self_eq_true]
+  simp [signUpdate, isSignTerminal, signUpdateNonTerminal]
 
 theorem signUpdate_cancel_match (id : String) :
     signUpdate (.SignCancel id) (.SignPending id) = .SignRejected id := by
-  simp [signUpdate, isSignTerminal, signUpdateNonTerminal, beq_self_eq_true]
+  simp [signUpdate, isSignTerminal, signUpdateNonTerminal]
 
 -- ============================================================================
 -- 7. signUpdate: non-matching id is a no-op
@@ -150,24 +150,15 @@ theorem signUpdate_cancel_match (id : String) :
 
 theorem signUpdate_response_nomatch (pendingId id sig : String) (h : pendingId ≠ id) :
     signUpdate (.SignResponse id sig) (.SignPending pendingId) = .SignPending pendingId := by
-  simp only [signUpdate, isSignTerminal, ite_false, signUpdateNonTerminal]
-  split_ifs with heq
-  · exact absurd ((beq_iff_eq _ _).mp heq) h
-  · rfl
+  simp [signUpdate, isSignTerminal, signUpdateNonTerminal, h]
 
 theorem signUpdate_error_nomatch (pendingId id err : String) (h : pendingId ≠ id) :
     signUpdate (.SignError id err) (.SignPending pendingId) = .SignPending pendingId := by
-  simp only [signUpdate, isSignTerminal, ite_false, signUpdateNonTerminal]
-  split_ifs with heq
-  · exact absurd ((beq_iff_eq _ _).mp heq) h
-  · rfl
+  simp [signUpdate, isSignTerminal, signUpdateNonTerminal, h]
 
 theorem signUpdate_cancel_nomatch (pendingId id : String) (h : pendingId ≠ id) :
     signUpdate (.SignCancel id) (.SignPending pendingId) = .SignPending pendingId := by
-  simp only [signUpdate, isSignTerminal, ite_false, signUpdateNonTerminal]
-  split_ifs with heq
-  · exact absurd ((beq_iff_eq _ _).mp heq) h
-  · rfl
+  simp [signUpdate, isSignTerminal, signUpdateNonTerminal, h]
 
 -- ============================================================================
 -- 8. SignIdle is a no-op for signUpdate
@@ -175,7 +166,7 @@ theorem signUpdate_cancel_nomatch (pendingId id : String) (h : pendingId ≠ id)
 
 theorem signUpdate_idle (msg : SignMsg) :
     signUpdate msg .SignIdle = .SignIdle := by
-  simp only [signUpdate, isSignTerminal, ite_false, signUpdateNonTerminal]
+  simp only [signUpdate, isSignTerminal, signUpdateNonTerminal]
   cases msg <;> rfl
 
 -- ============================================================================
@@ -209,7 +200,7 @@ theorem signUpdate_produces_terminal_iff
       ((∃ sig, msg = .SignResponse pendingId sig) ∨
        (∃ err, msg = .SignError pendingId err) ∨
        (msg = .SignCancel pendingId)) := by
-  simp only [signUpdate, hnt, ite_false] at ht
+  simp only [signUpdate, hnt, Bool.false_eq_true, if_false] at ht
   rcases (isSignTerminal_false_iff s).mp hnt with rfl | ⟨pendingId, rfl⟩
   -- Case s = SignIdle
   · cases msg <;> simp [signUpdateNonTerminal, isSignTerminal] at ht
@@ -217,20 +208,17 @@ theorem signUpdate_produces_terminal_iff
   · refine ⟨pendingId, rfl, ?_⟩
     cases msg with
     | SignResponse id sig =>
-      simp only [signUpdateNonTerminal] at ht
-      split_ifs at ht with heq
-      · exact Or.inl ⟨sig, by rw [← (beq_iff_eq _ _).mp heq]⟩
-      · simp [isSignTerminal] at ht
+      by_cases heq : pendingId = id
+      · subst heq; exact Or.inl ⟨sig, rfl⟩
+      · simp [signUpdateNonTerminal, heq, isSignTerminal] at ht
     | SignError id err =>
-      simp only [signUpdateNonTerminal] at ht
-      split_ifs at ht with heq
-      · exact Or.inr (Or.inl ⟨err, by rw [← (beq_iff_eq _ _).mp heq]⟩)
-      · simp [isSignTerminal] at ht
+      by_cases heq : pendingId = id
+      · subst heq; exact Or.inr (Or.inl ⟨err, rfl⟩)
+      · simp [signUpdateNonTerminal, heq, isSignTerminal] at ht
     | SignCancel id =>
-      simp only [signUpdateNonTerminal] at ht
-      split_ifs at ht with heq
-      · exact Or.inr (Or.inr (by rw [← (beq_iff_eq _ _).mp heq]))
-      · simp [isSignTerminal] at ht
+      by_cases heq : pendingId = id
+      · subst heq; exact Or.inr (Or.inr rfl)
+      · simp [signUpdateNonTerminal, heq, isSignTerminal] at ht
 
 /-!
 ## Verified Properties (no sorry)

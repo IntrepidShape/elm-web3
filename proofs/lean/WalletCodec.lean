@@ -162,13 +162,13 @@ def decodeWalletCmd (j : JsonValue) : Option WalletCmd :=
                          lookupField "decimals" ncFields >>= asInt) with
                   | (some ncName, some ncSymbol, some ncDec) =>
                       some (.RequestAddChain
-                        { chainId                = cid
-                        , chainName              = cname
-                        , rpcUrls                = rpcs
-                        , nativeCurrencyName     = ncName
-                        , nativeCurrencySymbol   = ncSymbol
-                        , nativeCurrencyDecimals = ncDec
-                        , blockExplorerUrls      = beurls
+                        { chainId                := cid
+                        , chainName              := cname
+                        , rpcUrls                := rpcs
+                        , nativeCurrencyName     := ncName
+                        , nativeCurrencySymbol   := ncSymbol
+                        , nativeCurrencyDecimals := ncDec
+                        , blockExplorerUrls      := beurls
                         })
                   | _ => none
               | none => none
@@ -205,10 +205,20 @@ theorem lookupField_skip (k₁ k₂ : String) (v : JsonValue)
 theorem asStringList_encodeStringList (xs : List String) :
     asStringList (encodeStringList xs) = some xs := by
   induction xs with
-  | nil => simp [encodeStringList, asStringList, List.mapM]
+  | nil => rfl
   | cons h t ih =>
-    simp [encodeStringList, asStringList, List.mapM, asString, List.map,
-          List.mapM_cons, ih, Bind.bind, Option.bind]
+    simp_all [encodeStringList, asStringList, asString, List.mapM_cons]
+
+/-- `encodeStringList` is injective (via the roundtrip). -/
+@[simp]
+theorem encodeStringList_inj (xs ys : List String) :
+    encodeStringList xs = encodeStringList ys ↔ xs = ys := by
+  constructor
+  · intro h
+    have hx := asStringList_encodeStringList xs
+    rw [h, asStringList_encodeStringList] at hx
+    exact (Option.some.inj hx).symm
+  · intro h; rw [h]
 
 -- ============================================================================
 -- 8. PROOF: Roundtrip — decode(encode(cmd)) = some cmd
@@ -228,10 +238,8 @@ theorem decode_encode_roundtrip (cmd : WalletCmd) :
       simp [encodeWalletCmd, decodeWalletCmd, lookupField, asString,
             Bind.bind, Option.bind]
   | RequestAddChain cfg =>
-      simp only [encodeWalletCmd, decodeWalletCmd, lookupField_head]
-      simp only [lookupField_skip (h := by decide), lookupField_head]
-      simp [asString, asInt, asStringList_encodeStringList, asObject,
-            Bind.bind, Option.bind]
+      simp [encodeWalletCmd, decodeWalletCmd, lookupField, asString, asInt,
+            asObject, asStringList_encodeStringList, Bind.bind, Option.bind]
   | RequestWatchAsset opts =>
       simp [encodeWalletCmd, decodeWalletCmd, lookupField, asString, asInt,
             Bind.bind, Option.bind]
@@ -246,11 +254,11 @@ theorem decode_encode_roundtrip (cmd : WalletCmd) :
 
 theorem encode_injective : Function.Injective encodeWalletCmd := by
   intro c₁ c₂ h
-  cases c₁ <;> cases c₂ <;> simp [encodeWalletCmd] at h <;> try rfl
-  all_goals (first | (obtain rfl := h; rfl) | (obtain ⟨_, rfl⟩ := h; rfl)
-             | (obtain rfl := h.1; obtain rfl := h.2; rfl)
-             | (rename_i cfg₁ cfg₂; cases cfg₁; cases cfg₂; simp at h; obtain ⟨h1,h2,h3,h4,h5,h6,h7⟩ := h; subst_vars; rfl)
-             | (rename_i o₁ o₂; cases o₁; cases o₂; simp at h; obtain ⟨h1,h2,h3,h4⟩ := h; subst_vars; rfl))
+  cases c₁ <;> cases c₂ <;> simp [encodeWalletCmd] at h <;> try simp_all
+  case RequestAddChain.RequestAddChain cfg₁ cfg₂ =>
+    cases cfg₁ <;> cases cfg₂ <;> simp_all
+  case RequestWatchAsset.RequestWatchAsset o₁ o₂ =>
+    cases o₁ <;> cases o₂ <;> simp_all
 
 theorem encode_distinct (c₁ c₂ : WalletCmd) (h : c₁ ≠ c₂) :
     encodeWalletCmd c₁ ≠ encodeWalletCmd c₂ :=
