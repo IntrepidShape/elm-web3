@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.2 — 2026-07-02
+
+- Docs-only: README refresh (verification-story links: proofs page, coverage
+  ledger, CI enforcement) so the registry page carries the current front
+  door. No code changes.
+
+
 ## 1.4.1 — 2026-07-02
 
 ### Changed
