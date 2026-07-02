@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.2.2 — 2026-07-02
+
+### Fixed — revert reasons never decoded (wrong selector constant)
+
+- **`Web3.Abi.Decode.decodeRevertReason`** compared against `08c379a2`; the
+  real `Error(string)` selector is **`0x08c379a0`**. Every genuine on-chain
+  revert payload therefore returned `Nothing` since the function shipped.
+  The Lean proofs in `proofs/lean/RevertReason.lean` faithfully verified the
+  typo'd constant — correct proofs about the wrong world. Constant fixed in
+  code and proofs; four canonical real-world vectors (what solc 0.8+
+  actually emits) added as regression tests, including one asserting the
+  old typo'd selector does NOT decode. See `proofs/COVERAGE.md` §Known
+  limitations for the epistemics.
+
+
 ## 1.2.1 — 2026-07-02
 
 > Registry note: the 1.1.0 and 1.2.0 tags below existed in git but had never

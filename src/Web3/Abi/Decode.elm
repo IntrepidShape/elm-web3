@@ -350,11 +350,11 @@ tuple3Hex da db dc hex =
 
 {-| Attempt to decode an EVM revert reason from raw revert data.
 
-Checks for the Error(string) selector `0x08c379a2` and decodes the
+Checks for the Error(string) selector `0x08c379a0` and decodes the
 ABI-encoded string that follows. Returns Nothing if the data is not
 a standard Error(string) revert.
 
-    decodeRevertReason "0x08c379a200000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000011496e73756666696369656e742066756e647300000000000000000000000000"
+    decodeRevertReason "0x08c379a000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000011496e73756666696369656e742066756e647300000000000000000000000000"
     --> Just "Insufficient funds"
 
 -}
@@ -369,7 +369,7 @@ decodeRevertReason hex =
             else
                 hex
 
-        -- Error(string) selector is 08c379a2 — 8 hex chars
+        -- Error(string) selector is 08c379a0 — 8 hex chars
         selector =
             String.left 8 (String.toLower raw)
 
@@ -394,7 +394,7 @@ decodeRevertReason hex =
         stringHex =
             String.left (stringLength * 2) (String.dropLeft 64 afterOffset)
     in
-    if selector == "08c379a2" && String.length raw >= 8 + 64 + 64 then
+    if selector == "08c379a0" && String.length raw >= 8 + 64 + 64 then
         hexUtf8ToString stringHex
 
     else

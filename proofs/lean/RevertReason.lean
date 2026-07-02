@@ -3,7 +3,7 @@
 
   Models `decodeRevertReason` from src/Web3/Abi/Decode.elm and proves:
 
-  1. **Selector guard**: returns Nothing if the selector ≠ 0x08c379a2
+  1. **Selector guard**: returns Nothing if the selector ≠ 0x08c379a0
   2. **Minimum length guard**: returns Nothing if payload is too short
   3. **Soundness**: when it returns Just s, s is the correct UTF-8 string
      encoded at the correct ABI offset
@@ -13,12 +13,12 @@
   6. **utf8BytesToString soundness**: decodes well-formed UTF-8 correctly
 
   The Error(string) ABI encoding layout (after stripping 0x prefix):
-    [0..7]   : selector = "08c379a2"            (4 bytes = 8 hex chars)
+    [0..7]   : selector = "08c379a0"            (4 bytes = 8 hex chars)
     [8..71]  : offset word = 0x20 (= 32)        (32 bytes = 64 hex chars)
     [72..135]: string length word                (32 bytes = 64 hex chars)
     [136..]  : string bytes (padded to 32 bytes) (stringLength*2 hex chars)
 
-  The Elm code checks: selector == "08c379a2" ∧ length raw ≥ 8 + 64 + 64
+  The Elm code checks: selector == "08c379a0" ∧ length raw ≥ 8 + 64 + 64
 
   To check:
     $ lean proofs/lean/RevertReason.lean
@@ -164,11 +164,11 @@ where
 -- ============================================================================
 
 /-- The Error(string) function selector (4 bytes = 8 hex chars). -/
-def errorStringSelector : String := "08c379a2"
+def errorStringSelector : String := "08c379a0"
 
 /--
   **Selector guard**: if the first 8 hex chars of the payload (after 0x)
-  are not "08c379a2", `decodeRevertReason` returns Nothing.
+  are not "08c379a0", `decodeRevertReason` returns Nothing.
 -/
 theorem decodeRevertReason_wrong_selector
     (hex : String)
@@ -212,7 +212,7 @@ where
   The complete correctness theorem states:
 
   Given a hex string of the form:
-    "0x" ++ "08c379a2" ++ offsetWord ++ lengthWord ++ stringBytes ++ padding
+    "0x" ++ "08c379a0" ++ offsetWord ++ lengthWord ++ stringBytes ++ padding
 
   where:
     - offsetWord   encodes 0x20 (= 32) in 64 hex chars
@@ -248,7 +248,7 @@ where
   `decodeRevertReason` returns Just content.
 
   The proof decomposes into:
-  1. The selector check passes (given the payload is prefixed with "08c379a2").
+  1. The selector check passes (given the payload is prefixed with "08c379a0").
   2. The length check passes (payload ≥ 136 chars).
   3. `hexToInt lengthWord` gives the correct byte count.
   4. `hexToBytes stringBytes` gives the correct byte sequence.

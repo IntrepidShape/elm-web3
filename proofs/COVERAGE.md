@@ -141,6 +141,17 @@ verified evidence, though weaker than a proof.
 
 ## Known limitations of existing proofs
 
+0. **A machine-checked proof is only as good as its constants (1.2.2
+   lesson).** `decodeRevertReason` shipped comparing against selector
+   `08c379a2` — a typo; the real `Error(string)` selector is `08c379a0`
+   (keccak256-derived). The Lean theorems in `RevertReason.lean` were
+   *correct proofs about the wrong constant*: every guard property held,
+   relative to a selector that never occurs on chain, so no real revert
+   reason ever decoded. Caught by rendering a canonical solc payload in the
+   elm-web3-ui gallery; fixed in code + proofs, and pinned by real-world
+   vectors in `tests/AbiDecodeHexTest.elm`. Moral: proofs verify internal
+   consistency — external constants need oracle tests against reality.
+
 1. **TLA+ is finite-model checked, not proof-verified.** The model checker explores all reachable states within the given constants (2 addresses, 2 chains, 3 confirmation depth). Properties hold for those parameters; they hold generally by the construction of the state machine, but this is not mechanically proved.
 
 2. **Lean proofs model a simplified `toLowerHex`** that only maps `A–F → a–f`. The Elm runtime's `String.toLower` is broader (full Unicode case folding). In practice all addresses are ASCII hex, so this does not matter, but it is a gap between the model and the implementation.

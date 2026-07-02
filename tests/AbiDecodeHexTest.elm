@@ -12,6 +12,7 @@ suite : Test
 suite =
     describe "Web3.Abi.Decode — hex slot API"
         [ hexSlotTests
+        , realRevertVectorsTest
         , uint256SlotTests
         , addressSlotTests
         , boolSlotTests
@@ -371,4 +372,50 @@ uint256HexDecoderTests =
                                 Err e ->
                                     Expect.fail (D.errorToString e)
                        )
+        ]
+
+
+{-| REGRESSION — the Error(string) selector is 0x08c379a0 (keccak256 of
+"Error(string)" truncated to 4 bytes). The library shipped for months
+comparing against 08c379a2 — a typo'd constant that meant NO real on-chain
+revert reason ever decoded, while the Lean proofs correctly verified the
+wrong constant. These vectors are real-world-canonical: what solc 0.8+
+actually returns on `revert("...")`. They must decode, forever.
+-}
+realRevertVectorsTest : Test
+realRevertVectorsTest =
+    describe "decodeRevertReason: canonical real-world vectors"
+        [ test "solc revert(\"Insufficient funds\") decodes" <|
+            \_ ->
+                Decode.decodeRevertReason
+                    ("0x08c379a0"
+                        ++ "0000000000000000000000000000000000000000000000000000000000000020"
+                        ++ "0000000000000000000000000000000000000000000000000000000000000012"
+                        ++ "496e73756666696369656e742066756e64730000000000000000000000000000"
+                    )
+                    |> Expect.equal (Just "Insufficient funds")
+        , test "solc revert(\"Insufficient balance for this purchase\") decodes" <|
+            \_ ->
+                Decode.decodeRevertReason
+                    ("0x08c379a0"
+                        ++ "0000000000000000000000000000000000000000000000000000000000000020"
+                        ++ "0000000000000000000000000000000000000000000000000000000000000026"
+                        ++ "496e73756666696369656e742062616c616e636520666f722074686973207075"
+                        ++ "7263686173650000000000000000000000000000000000000000000000000000"
+                    )
+                    |> Expect.equal (Just "Insufficient balance for this purchase")
+        , test "the old typo'd selector 08c379a2 does NOT decode" <|
+            \_ ->
+                Decode.decodeRevertReason
+                    ("0x08c379a2"
+                        ++ "0000000000000000000000000000000000000000000000000000000000000020"
+                        ++ "0000000000000000000000000000000000000000000000000000000000000012"
+                        ++ "496e73756666696369656e742066756e64730000000000000000000000000000"
+                    )
+                    |> Expect.equal Nothing
+        , test "Panic(uint256) selector 0x4e487b71 does not decode as a string" <|
+            \_ ->
+                Decode.decodeRevertReason
+                    "0x4e487b710000000000000000000000000000000000000000000000000000000000000011"
+                    |> Expect.equal Nothing
         ]
