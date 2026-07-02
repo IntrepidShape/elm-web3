@@ -502,3 +502,24 @@ The JS port layer is **fundamentally safe**. The single global try/catch around 
 The identified findings are correctness/completeness issues (missing responses for `switchChain`, stub `watchEvent`, silent unknown tags), not safety violations. The only theoretical safety gaps involve Elm runtime `send()` failures, which are outside the scope of this layer.
 
 **Safety rating: PASS** — with recommendations for completeness improvements.
+
+---
+
+## Re-audit 2026-07-02 — F1–F8 verdicts against the current bridge
+
+The bridge (`js/elm-web3-ports.ts`) has been substantially rewritten since
+the findings above were recorded. Verified by inspection of the current
+source:
+
+| # | Original finding | Verdict |
+|---|---|---|
+| F1 | `switchChain` sends no success response | **Fixed** — `{ tag: 'switchChainOk', chainId }` emitted on success |
+| F2 | `watchEvent` is an empty stub | **Fixed** — full implementation: shared-WS `eth_subscribe(logs)` with re-arm on reconnect, 4s `eth_getLogs` poll fallback |
+| F3 | Unknown tags silently ignored | **Fixed** — `{ tag: 'unknownCmd' }` response |
+| F4 | `connect` may send `address: undefined` | **Fixed** — accounts-array guards before send |
+| F5 | `pollReceipt` unhandled rejection | **Fixed** — try/catch inside the poll loop |
+| F6 | Wallet event listeners lack try/catch | **Fixed** — listeners wrapped |
+| F7 | Error tag inconsistency | **Resolved by convention** — failures unified on the switch-level catch emitting `failed` with a context field; per-module decoders document their tags |
+| F8 | `watchBlockNumber` interval leak (found 2026-07-02) | **Fixed in 1.3.0** — pollers keyed by id, replaced on re-issue, `unwatchBlockNumber` clears |
+
+No open port-layer findings as of this audit.
