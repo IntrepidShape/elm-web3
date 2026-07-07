@@ -1,11 +1,16 @@
 module Web3.Wallet exposing
     ( State(..)
+    , RequestId
+    , ConnectFailureReason(..)
     , Msg(..)
     , WalletCmd(..)
     , WalletProvider
     , ChainConfig
     , update
     , startConnect
+    , timeoutConnect
+    , isConnecting
+    , connectingRequestId
     , connect
     , disconnect
     , switchChain
@@ -49,17 +54,29 @@ port and present the list to the user; call `selectWallet rdns` when they pick.
 
 **Typical connection flow:**
 
-1. User clicks "Connect" → call `startConnect` on state, send `connect` via port.
+1. User clicks "Connect" → mint a fresh `RequestId` (an incrementing counter
+   you own), call `startConnect requestId` on state, send `connect requestId`
+   via port. Gate the click on `not (isConnecting state)` so a second click
+   while one is already in flight never double-fires.
 2. `WalletsDiscovered providers` arrives → show picker if `providers` is non-empty.
-3. User picks a wallet → send `selectWallet rdns` via port.
-4. `WalletConnected addr chainId` arrives → `update` transitions to `Connected` or `WrongChain`.
-5. If `WrongChain` → send `switchChain expectedChain` via port.
+3. User picks a wallet → mint a fresh `RequestId` the same way, send
+   `selectWallet requestId rdns` via port.
+4. `WalletConnected (Just requestId) addr chainId` arrives → `update` checks
+   the id against the active `Connecting` request (dropping it silently if a
+   newer attempt has since superseded it) and transitions to `Connected` or
+   `WrongChain`.
+5. If `WalletConnectRejected`/`WalletConnectFailed` arrives instead, `update`
+   returns to `Disconnected`/`Error` respectively (again only if the id still
+   matches). Arm a timeout (e.g. 30s via `Process.sleep`) when entering
+   `Connecting`; on fire, call `timeoutConnect requestId` — a no-op if the
+   request already resolved.
+6. If `WrongChain` → send `switchChain expectedChain` via port.
 
 For native balance queries, use `Web3.Balance`. For adding chains, use `addChain` with
 a `ChainConfig` record and follow up with `switchChain`.
 
-@docs State, Msg, WalletCmd, WalletProvider, ChainConfig
-@docs update, startConnect
+@docs State, RequestId, ConnectFailureReason, Msg, WalletCmd, WalletProvider, ChainConfig
+@docs update, startConnect, timeoutConnect, isConnecting, connectingRequestId
 @docs connect, disconnect, switchChain, selectWallet, addChain
 @docs watchAsset, requestPermissions, getPermissions
 @docs isConnected, isReadOnly, getAddress, getChainId
@@ -85,10 +102,30 @@ import Web3.Types as T
 type State
     = Disconnected
     | ReadOnly
-    | Connecting
+    | Connecting RequestId
     | Connected ConnectedInfo
     | WrongChain ConnectedInfo T.ChainId
     | Error String
+
+
+{-| Identifies a single connect attempt so a stale response or timeout from a
+superseded attempt (e.g. the user clicked Connect, gave up, and clicked again)
+can never clobber a newer one. Callers own the counter (increment on every
+`startConnect` call) — this module only compares ids, it never generates them.
+-}
+type alias RequestId =
+    Int
+
+
+{-| Why a connect attempt failed to resolve into `Connected`/`WrongChain`.
+Does not cover explicit rejection ([`WalletConnectRejected`](#Msg)) or a
+request that's still pending elsewhere ([`WalletConnectPending`](#Msg)) —
+those are distinct, expected outcomes, not failures.
+-}
+type ConnectFailureReason
+    = NotFound
+    | NoAccounts
+    | NetworkError
 
 
 type alias ConnectedInfo =
@@ -118,9 +155,17 @@ type alias ChainConfig =
 
 
 {-| Messages from the JS wallet port.
+
+`WalletConnected`'s `Maybe RequestId` is `Nothing` only for a silent,
+non-prompting reconnect on page load (no request was ever "in flight" to
+match against); every user-initiated connect carries `Just` the id passed to
+`connect`/`selectWallet`.
 -}
 type Msg
-    = WalletConnected String Int
+    = WalletConnected (Maybe RequestId) String Int
+    | WalletConnectRejected RequestId
+    | WalletConnectPending RequestId
+    | WalletConnectFailed RequestId ConnectFailureReason String
     | WalletDisconnected
     | ChainChanged Int
     | AccountChanged String
@@ -136,10 +181,10 @@ type Msg
 {-| Commands to send to JS via port.
 -}
 type WalletCmd
-    = RequestConnect
+    = RequestConnect RequestId
     | RequestDisconnect
     | RequestSwitchChain Int
-    | RequestSelectWallet String
+    | RequestSelectWallet RequestId String
     | RequestAddChain ChainConfig
     | RequestWatchAsset { address : T.Address, symbol : String, decimals : Int, image : String }
     | RequestPermissions
@@ -151,21 +196,72 @@ type WalletCmd
 update : T.ChainId -> Msg -> State -> State
 update expectedChain msg state =
     case msg of
-        WalletConnected addr chain ->
-            case T.address addr of
-                Just a ->
-                    let
-                        info =
-                            { address = a, chainId = T.chainId chain }
-                    in
-                    if chain == T.chainIdToInt expectedChain then
-                        Connected info
+        WalletConnected maybeRid addr chain ->
+            let
+                -- A response only gets dropped as stale if we're actively
+                -- Connecting on a DIFFERENT, newer request. Every other case
+                -- (silent reconnect with no id, or the state has already
+                -- moved on) is accepted — a late-arriving success is still
+                -- good news, never a reason to leave the user stuck.
+                isStale =
+                    case ( state, maybeRid ) of
+                        ( Connecting activeId, Just rid ) ->
+                            rid /= activeId
+
+                        _ ->
+                            False
+            in
+            if isStale then
+                state
+
+            else
+                case T.address addr of
+                    Just a ->
+                        let
+                            info =
+                                { address = a, chainId = T.chainId chain }
+                        in
+                        if chain == T.chainIdToInt expectedChain then
+                            Connected info
+
+                        else
+                            WrongChain info expectedChain
+
+                    Nothing ->
+                        Error ("Invalid address: " ++ addr)
+
+        WalletConnectRejected rid ->
+            case state of
+                Connecting activeId ->
+                    if rid == activeId then
+                        Disconnected
 
                     else
-                        WrongChain info expectedChain
+                        -- Stale rejection from a superseded attempt.
+                        state
 
-                Nothing ->
-                    Error ("Invalid address: " ++ addr)
+                _ ->
+                    state
+
+        WalletConnectPending _ ->
+            -- MetaMask -32002 "already processing eth_requestAccounts" —
+            -- purely informational (the app should surface a toast telling
+            -- the user to check their wallet); the FSM itself has nothing to
+            -- transition, since we're already correctly sitting in
+            -- Connecting from the original attempt.
+            state
+
+        WalletConnectFailed rid _ errorMessage ->
+            case state of
+                Connecting activeId ->
+                    if rid == activeId then
+                        Error errorMessage
+
+                    else
+                        state
+
+                _ ->
+                    state
 
         WalletDisconnected ->
             case state of
@@ -280,36 +376,91 @@ update expectedChain msg state =
             state
 
 
-{-| Transition to `Connecting` state before sending the `connect` port command.
+{-| Transition to `Connecting requestId` before sending the `connect` port command.
 
-Call this when the user clicks the connect button, then send `connect` via the port:
+Call this when the user clicks the connect button — mint a fresh `RequestId`
+(an incrementing counter you own) — then send `connect` via the port:
 
-    ( { model | wallet = Wallet.startConnect model.wallet }
-    , web3Cmd (Wallet.encode Wallet.connect)
+    ( { model
+        | wallet = Wallet.startConnect requestId model.wallet
+        , nextConnectId = requestId + 1
+      }
+    , web3Cmd (Wallet.encode (Wallet.connect requestId))
     )
 
 Valid transitions: `Disconnected → Connecting`, `Error _ → Connecting`.
-All other states are unchanged (connecting while already connected is a no-op).
+All other states are unchanged — in particular, calling this while already
+`Connecting` is a no-op, which is exactly what you want: guard the connect
+button's click handler on `not (isConnecting state)` rather than relying on
+this to somehow queue or replace the in-flight request.
 
 -}
-startConnect : State -> State
-startConnect state =
+startConnect : RequestId -> State -> State
+startConnect rid state =
     case state of
         Disconnected ->
-            Connecting
+            Connecting rid
 
         Error _ ->
-            Connecting
+            Connecting rid
 
         _ ->
             state
 
 
-{-| Command to request wallet connection.
+{-| Time out a `Connecting requestId` back to `Disconnected` if it's still
+the active request — a no-op if the request already resolved (into
+`Connected`, `WrongChain`, `Error`, or back to `Disconnected`) or has already
+been superseded by a newer one. Call this from a `Process.sleep`-armed
+timeout started alongside `startConnect`, mirroring this codebase's existing
+tx-timeout-watchdog pattern.
 -}
-connect : WalletCmd
-connect =
-    RequestConnect
+timeoutConnect : RequestId -> State -> State
+timeoutConnect rid state =
+    case state of
+        Connecting activeId ->
+            if rid == activeId then
+                Disconnected
+
+            else
+                state
+
+        _ ->
+            state
+
+
+{-| True while a connect attempt is in flight — use this to gate the connect
+button/click-handler so a second click never double-fires `eth_requestAccounts`
+while the wallet is still processing the first one.
+-}
+isConnecting : State -> Bool
+isConnecting state =
+    case state of
+        Connecting _ ->
+            True
+
+        _ ->
+            False
+
+
+{-| The `RequestId` of the in-flight connect attempt, if any.
+-}
+connectingRequestId : State -> Maybe RequestId
+connectingRequestId state =
+    case state of
+        Connecting rid ->
+            Just rid
+
+        _ ->
+            Nothing
+
+
+{-| Command to request wallet connection. Pass the same `RequestId` given to
+`startConnect` so the eventual response can be matched back to this attempt.
+-}
+connect : RequestId -> WalletCmd
+connect rid =
+    RequestConnect rid
 
 
 {-| Command to request wallet disconnection.
@@ -327,13 +478,14 @@ switchChain c =
 
 
 {-| Command to select a specific wallet by its RDNS identifier (EIP-6963).
+Pass the same `RequestId` given to `startConnect`.
 
-    selectWallet "io.metamask"
+    selectWallet requestId "io.metamask"
 
 -}
-selectWallet : String -> WalletCmd
-selectWallet rdns =
-    RequestSelectWallet rdns
+selectWallet : RequestId -> String -> WalletCmd
+selectWallet rid rdns =
+    RequestSelectWallet rid rdns
 
 
 {-| Request wallet_addEthereumChain (EIP-3085) to add a new network.
@@ -430,8 +582,11 @@ getChainId state =
 encode : WalletCmd -> E.Value
 encode cmd =
     case cmd of
-        RequestConnect ->
-            E.object [ ( "tag", E.string "connect" ) ]
+        RequestConnect rid ->
+            E.object
+                [ ( "tag", E.string "connect" )
+                , ( "requestId", E.int rid )
+                ]
 
         RequestDisconnect ->
             E.object [ ( "tag", E.string "disconnect" ) ]
@@ -442,9 +597,10 @@ encode cmd =
                 , ( "chainId", E.int chain )
                 ]
 
-        RequestSelectWallet rdns ->
+        RequestSelectWallet rid rdns ->
             E.object
                 [ ( "tag", E.string "selectWallet" )
+                , ( "requestId", E.int rid )
                 , ( "rdns", E.string rdns )
                 ]
 
@@ -489,9 +645,22 @@ decoder =
             (\tag ->
                 case tag of
                     "connected" ->
-                        D.map2 WalletConnected
+                        D.map3 WalletConnected
+                            (D.maybe (D.field "requestId" D.int))
                             (D.field "address" D.string)
                             (D.field "chainId" D.int)
+
+                    "connectRejected" ->
+                        D.map WalletConnectRejected (D.field "requestId" D.int)
+
+                    "connectPending" ->
+                        D.map WalletConnectPending (D.field "requestId" D.int)
+
+                    "connectFailed" ->
+                        D.map3 WalletConnectFailed
+                            (D.field "requestId" D.int)
+                            (D.field "reason" D.string |> D.andThen decodeConnectFailureReason)
+                            (D.field "error" D.string)
 
                     "disconnected" ->
                         D.succeed WalletDisconnected
@@ -535,4 +704,22 @@ decoder =
                     _ ->
                         D.fail ("Unknown wallet message: " ++ tag)
             )
+
+
+{-| Decode the JS-supplied `reason` string on a `connectFailed` message.
+Defaults to `NetworkError` for anything unrecognized rather than failing the
+whole decoder — a forwards-compatible reason string from a newer JS build
+should still degrade to a generic (but real) error, not crash the app.
+-}
+decodeConnectFailureReason : String -> D.Decoder ConnectFailureReason
+decodeConnectFailureReason reason =
+    case reason of
+        "not_found" ->
+            D.succeed NotFound
+
+        "no_accounts" ->
+            D.succeed NoAccounts
+
+        _ ->
+            D.succeed NetworkError
 

@@ -36,6 +36,88 @@ suite =
         , decoderTests
         , watchAssetTests
         , permissionsTests
+        , requestIdTests
+        ]
+
+
+{-| The core correctness property of the whole RequestId mechanism: a
+response/rejection/failure/timeout only takes effect if its id matches the
+CURRENTLY active `Connecting` request — anything from a superseded, older
+attempt is silently dropped rather than clobbering a newer one. This is what
+makes "click Connect, give up, click Connect again" safe.
+-}
+requestIdTests : Test
+requestIdTests =
+    describe "RequestId stale-response handling"
+        [ test "WalletConnected with a matching requestId resolves Connecting" <|
+            \_ ->
+                Wallet.update pulseChain (Wallet.WalletConnected (Just 1) validAddress 369) (Wallet.Connecting 1)
+                    |> Wallet.isConnected
+                    |> Expect.equal True
+        , test "WalletConnected with a stale (non-matching) requestId is dropped" <|
+            \_ ->
+                Wallet.update pulseChain (Wallet.WalletConnected (Just 1) validAddress 369) (Wallet.Connecting 2)
+                    |> Expect.equal (Wallet.Connecting 2)
+        , test "WalletConnected with no requestId (silent reconnect) resolves from any state" <|
+            \_ ->
+                Wallet.update pulseChain (Wallet.WalletConnected Nothing validAddress 369) Wallet.Disconnected
+                    |> Wallet.isConnected
+                    |> Expect.equal True
+        , test "WalletConnectRejected with a matching requestId -> Disconnected" <|
+            \_ ->
+                Wallet.update pulseChain (Wallet.WalletConnectRejected 1) (Wallet.Connecting 1)
+                    |> Expect.equal Wallet.Disconnected
+        , test "WalletConnectRejected with a stale requestId is dropped (stays Connecting)" <|
+            \_ ->
+                Wallet.update pulseChain (Wallet.WalletConnectRejected 1) (Wallet.Connecting 2)
+                    |> Expect.equal (Wallet.Connecting 2)
+        , test "WalletConnectPending never changes state, matching or not" <|
+            \_ ->
+                Wallet.update pulseChain (Wallet.WalletConnectPending 1) (Wallet.Connecting 1)
+                    |> Expect.equal (Wallet.Connecting 1)
+        , test "WalletConnectFailed with a matching requestId -> Error with the message" <|
+            \_ ->
+                Wallet.update pulseChain (Wallet.WalletConnectFailed 1 Wallet.NetworkError "boom") (Wallet.Connecting 1)
+                    |> Expect.equal (Wallet.Error "boom")
+        , test "WalletConnectFailed with a stale requestId is dropped (stays Connecting)" <|
+            \_ ->
+                Wallet.update pulseChain (Wallet.WalletConnectFailed 1 Wallet.NetworkError "boom") (Wallet.Connecting 2)
+                    |> Expect.equal (Wallet.Connecting 2)
+        , test "timeoutConnect with a matching requestId -> Disconnected" <|
+            \_ ->
+                Wallet.timeoutConnect 1 (Wallet.Connecting 1)
+                    |> Expect.equal Wallet.Disconnected
+        , test "timeoutConnect with a stale requestId is a no-op (a newer attempt superseded it)" <|
+            \_ ->
+                Wallet.timeoutConnect 1 (Wallet.Connecting 2)
+                    |> Expect.equal (Wallet.Connecting 2)
+        , test "timeoutConnect is a no-op once already Connected" <|
+            \_ ->
+                let
+                    connected =
+                        Wallet.update pulseChain (Wallet.WalletConnected (Just 1) validAddress 369) (Wallet.Connecting 1)
+                in
+                Wallet.timeoutConnect 1 connected
+                    |> Expect.equal connected
+        , test "isConnecting is True while Connecting, False otherwise" <|
+            \_ ->
+                Expect.all
+                    [ \_ -> Wallet.isConnecting (Wallet.Connecting 1) |> Expect.equal True
+                    , \_ -> Wallet.isConnecting Wallet.Disconnected |> Expect.equal False
+                    , \_ -> Wallet.isConnecting Wallet.ReadOnly |> Expect.equal False
+                    ]
+                    ()
+        , test "connectingRequestId returns Just the active id while Connecting, Nothing otherwise" <|
+            \_ ->
+                Expect.all
+                    [ \_ -> Wallet.connectingRequestId (Wallet.Connecting 5) |> Expect.equal (Just 5)
+                    , \_ -> Wallet.connectingRequestId Wallet.Disconnected |> Expect.equal Nothing
+                    ]
+                    ()
+        , test "startConnect mints Connecting with the given id" <|
+            \_ ->
+                Wallet.startConnect 42 Wallet.Disconnected
+                    |> Expect.equal (Wallet.Connecting 42)
         ]
 
 
@@ -44,14 +126,14 @@ stateTransitionTests =
     describe "update state transitions"
         [ test "Disconnected + WalletConnected on expected chain -> Connected" <|
             \_ ->
-                Wallet.update pulseChain (Wallet.WalletConnected validAddress 369) Wallet.Disconnected
+                Wallet.update pulseChain (Wallet.WalletConnected Nothing validAddress 369) Wallet.Disconnected
                     |> Wallet.isConnected
                     |> Expect.equal True
         , test "Disconnected + WalletConnected on wrong chain -> WrongChain" <|
             \_ ->
                 let
                     newState =
-                        Wallet.update pulseChain (Wallet.WalletConnected validAddress 1) Wallet.Disconnected
+                        Wallet.update pulseChain (Wallet.WalletConnected Nothing validAddress 1) Wallet.Disconnected
                 in
                 case newState of
                     Wallet.WrongChain _ _ ->
@@ -63,7 +145,7 @@ stateTransitionTests =
             \_ ->
                 let
                     newState =
-                        Wallet.update pulseChain (Wallet.WalletConnected "not-an-address" 369) Wallet.Disconnected
+                        Wallet.update pulseChain (Wallet.WalletConnected Nothing "not-an-address" 369) Wallet.Disconnected
                 in
                 case newState of
                     Wallet.Error _ ->
@@ -75,7 +157,7 @@ stateTransitionTests =
             \_ ->
                 let
                     connected =
-                        Wallet.update pulseChain (Wallet.WalletConnected validAddress 369) Wallet.Disconnected
+                        Wallet.update pulseChain (Wallet.WalletConnected Nothing validAddress 369) Wallet.Disconnected
                 in
                 Wallet.update pulseChain Wallet.WalletDisconnected connected
                     |> Expect.equal Wallet.Disconnected
@@ -83,7 +165,7 @@ stateTransitionTests =
             \_ ->
                 let
                     connected =
-                        Wallet.update pulseChain (Wallet.WalletConnected validAddress 369) Wallet.Disconnected
+                        Wallet.update pulseChain (Wallet.WalletConnected Nothing validAddress 369) Wallet.Disconnected
 
                     newState =
                         Wallet.update pulseChain (Wallet.ChainChanged 369) connected
@@ -93,7 +175,7 @@ stateTransitionTests =
             \_ ->
                 let
                     connected =
-                        Wallet.update pulseChain (Wallet.WalletConnected validAddress 369) Wallet.Disconnected
+                        Wallet.update pulseChain (Wallet.WalletConnected Nothing validAddress 369) Wallet.Disconnected
 
                     newState =
                         Wallet.update pulseChain (Wallet.ChainChanged 1) connected
@@ -108,7 +190,7 @@ stateTransitionTests =
             \_ ->
                 let
                     wrongChain =
-                        Wallet.update pulseChain (Wallet.WalletConnected validAddress 1) Wallet.Disconnected
+                        Wallet.update pulseChain (Wallet.WalletConnected Nothing validAddress 1) Wallet.Disconnected
 
                     newState =
                         Wallet.update pulseChain (Wallet.ChainChanged 369) wrongChain
@@ -118,7 +200,7 @@ stateTransitionTests =
             \_ ->
                 let
                     wrongChain =
-                        Wallet.update pulseChain (Wallet.WalletConnected validAddress 1) Wallet.Disconnected
+                        Wallet.update pulseChain (Wallet.WalletConnected Nothing validAddress 1) Wallet.Disconnected
 
                     newState =
                         Wallet.update pulseChain (Wallet.ChainChanged 56) wrongChain
@@ -133,7 +215,7 @@ stateTransitionTests =
             \_ ->
                 let
                     connected =
-                        Wallet.update pulseChain (Wallet.WalletConnected validAddress 369) Wallet.Disconnected
+                        Wallet.update pulseChain (Wallet.WalletConnected Nothing validAddress 369) Wallet.Disconnected
                 in
                 Wallet.update pulseChain Wallet.ReadOnlyMode connected
                     |> Wallet.isConnected
@@ -142,7 +224,7 @@ stateTransitionTests =
             \_ ->
                 let
                     wrongChain =
-                        Wallet.update pulseChain (Wallet.WalletConnected validAddress 1) Wallet.Disconnected
+                        Wallet.update pulseChain (Wallet.WalletConnected Nothing validAddress 1) Wallet.Disconnected
                 in
                 case Wallet.update pulseChain Wallet.ReadOnlyMode wrongChain of
                     Wallet.WrongChain _ _ ->
@@ -163,7 +245,7 @@ stateTransitionTests =
             \_ ->
                 let
                     connected =
-                        Wallet.update pulseChain (Wallet.WalletConnected validAddress 369) Wallet.Disconnected
+                        Wallet.update pulseChain (Wallet.WalletConnected Nothing validAddress 369) Wallet.Disconnected
 
                     newState =
                         Wallet.update pulseChain (Wallet.AccountChanged validAddress2) connected
@@ -173,7 +255,7 @@ stateTransitionTests =
             \_ ->
                 let
                     connected =
-                        Wallet.update pulseChain (Wallet.WalletConnected validAddress 369) Wallet.Disconnected
+                        Wallet.update pulseChain (Wallet.WalletConnected Nothing validAddress 369) Wallet.Disconnected
 
                     newState =
                         Wallet.update pulseChain (Wallet.AccountChanged validAddress2) connected
@@ -190,7 +272,7 @@ stateTransitionTests =
                     |> Expect.equal Wallet.Disconnected
         , test "any state + WalletError -> Error" <|
             \_ ->
-                Wallet.update pulseChain (Wallet.WalletError "rejected") Wallet.Connecting
+                Wallet.update pulseChain (Wallet.WalletError "rejected") (Wallet.Connecting 1)
                     |> (\s ->
                             case s of
                                 Wallet.Error _ ->
@@ -201,7 +283,7 @@ stateTransitionTests =
                        )
         , test "Connecting + WalletConnected on expected chain -> Connected" <|
             \_ ->
-                Wallet.update pulseChain (Wallet.WalletConnected validAddress 369) Wallet.Connecting
+                Wallet.update pulseChain (Wallet.WalletConnected (Just 1) validAddress 369) (Wallet.Connecting 1)
                     |> Wallet.isConnected
                     |> Expect.equal True
         , test "ReadOnly + AccountChanged -> ReadOnly (no-op)" <|
@@ -216,7 +298,7 @@ stateTransitionTests =
             \_ ->
                 let
                     wrongChain =
-                        Wallet.update pulseChain (Wallet.WalletConnected validAddress 1) Wallet.Disconnected
+                        Wallet.update pulseChain (Wallet.WalletConnected Nothing validAddress 1) Wallet.Disconnected
 
                     newState =
                         Wallet.update pulseChain (Wallet.SwitchChainOk 369) wrongChain
@@ -226,7 +308,7 @@ stateTransitionTests =
             \_ ->
                 let
                     connected =
-                        Wallet.update pulseChain (Wallet.WalletConnected validAddress 369) Wallet.Disconnected
+                        Wallet.update pulseChain (Wallet.WalletConnected Nothing validAddress 369) Wallet.Disconnected
 
                     newState =
                         Wallet.update pulseChain (Wallet.SwitchChainOk 369) connected
@@ -236,7 +318,7 @@ stateTransitionTests =
             \_ ->
                 let
                     wrongChain =
-                        Wallet.update pulseChain (Wallet.WalletConnected validAddress 1) Wallet.Disconnected
+                        Wallet.update pulseChain (Wallet.WalletConnected Nothing validAddress 1) Wallet.Disconnected
 
                     newState =
                         Wallet.update pulseChain (Wallet.SwitchChainOk 56) wrongChain
@@ -249,24 +331,24 @@ stateTransitionTests =
                         Expect.fail "Expected WrongChain"
         , test "startConnect from Disconnected -> Connecting" <|
             \_ ->
-                Wallet.startConnect Wallet.Disconnected
-                    |> Expect.equal Wallet.Connecting
+                Wallet.startConnect 1 Wallet.Disconnected
+                    |> Expect.equal (Wallet.Connecting 1)
         , test "startConnect from Error -> Connecting" <|
             \_ ->
-                Wallet.startConnect (Wallet.Error "oops")
-                    |> Expect.equal Wallet.Connecting
+                Wallet.startConnect 1 (Wallet.Error "oops")
+                    |> Expect.equal (Wallet.Connecting 1)
         , test "startConnect from Connected -> no-op" <|
             \_ ->
                 let
                     connected =
-                        Wallet.update pulseChain (Wallet.WalletConnected validAddress 369) Wallet.Disconnected
+                        Wallet.update pulseChain (Wallet.WalletConnected Nothing validAddress 369) Wallet.Disconnected
                 in
-                Wallet.startConnect connected
+                Wallet.startConnect 1 connected
                     |> Wallet.isConnected
                     |> Expect.equal True
         , test "startConnect from ReadOnly -> no-op" <|
             \_ ->
-                Wallet.startConnect Wallet.ReadOnly
+                Wallet.startConnect 1 Wallet.ReadOnly
                     |> Wallet.isReadOnly
                     |> Expect.equal True
         ]
@@ -280,7 +362,7 @@ helperTests =
                 Wallet.isConnected Wallet.Disconnected |> Expect.equal False
         , test "isConnected is False for Connecting" <|
             \_ ->
-                Wallet.isConnected Wallet.Connecting |> Expect.equal False
+                Wallet.isConnected (Wallet.Connecting 1) |> Expect.equal False
         , test "isReadOnly is True for ReadOnly" <|
             \_ ->
                 Wallet.isReadOnly Wallet.ReadOnly |> Expect.equal True
@@ -291,12 +373,12 @@ helperTests =
             \_ ->
                 let
                     connected =
-                        Wallet.update pulseChain (Wallet.WalletConnected validAddress 369) Wallet.Disconnected
+                        Wallet.update pulseChain (Wallet.WalletConnected Nothing validAddress 369) Wallet.Disconnected
                 in
                 Wallet.isReadOnly connected |> Expect.equal False
         , test "isReadOnly is False for Connecting" <|
             \_ ->
-                Wallet.isReadOnly Wallet.Connecting |> Expect.equal False
+                Wallet.isReadOnly (Wallet.Connecting 1) |> Expect.equal False
         , test "getAddress returns Nothing for Disconnected" <|
             \_ ->
                 Wallet.getAddress Wallet.Disconnected |> Expect.equal Nothing
@@ -304,7 +386,7 @@ helperTests =
             \_ ->
                 let
                     connected =
-                        Wallet.update pulseChain (Wallet.WalletConnected validAddress 369) Wallet.Disconnected
+                        Wallet.update pulseChain (Wallet.WalletConnected Nothing validAddress 369) Wallet.Disconnected
                 in
                 Wallet.getAddress connected |> Expect.notEqual Nothing
         , test "getChainId returns Nothing for Disconnected" <|
@@ -314,7 +396,7 @@ helperTests =
             \_ ->
                 let
                     connected =
-                        Wallet.update pulseChain (Wallet.WalletConnected validAddress 369) Wallet.Disconnected
+                        Wallet.update pulseChain (Wallet.WalletConnected Nothing validAddress 369) Wallet.Disconnected
                 in
                 case Wallet.getChainId connected of
                     Just cid ->
@@ -330,7 +412,7 @@ encoderTests =
     describe "encode"
         [ test "connect encodes tag" <|
             \_ ->
-                Wallet.encode Wallet.connect
+                Wallet.encode (Wallet.connect 1)
                     |> D.decodeValue (D.field "tag" D.string)
                     |> Expect.equal (Ok "connect")
         , test "disconnect encodes tag" <|
@@ -353,15 +435,16 @@ encoderTests =
 decoderTests : Test
 decoderTests =
     describe "decoder"
-        [ test "decodes connected message" <|
+        [ test "decodes connected message with no requestId (silent reconnect shape)" <|
             \_ ->
                 """{"tag":"connected","address":"0xabcdefabcdefabcdefabcdefabcdefabcdefabcd","chainId":369}"""
                     |> D.decodeString Wallet.decoder
                     |> (\result ->
                             case result of
-                                Ok (Wallet.WalletConnected addr chain) ->
+                                Ok (Wallet.WalletConnected maybeRid addr chain) ->
                                     Expect.all
-                                        [ \_ -> addr |> Expect.equal "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+                                        [ \_ -> maybeRid |> Expect.equal Nothing
+                                        , \_ -> addr |> Expect.equal "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"
                                         , \_ -> chain |> Expect.equal 369
                                         ]
                                         ()
@@ -369,6 +452,43 @@ decoderTests =
                                 _ ->
                                     Expect.fail "Expected WalletConnected"
                        )
+        , test "decodes connected message with a requestId" <|
+            \_ ->
+                """{"tag":"connected","requestId":7,"address":"0xabcdefabcdefabcdefabcdefabcdefabcdefabcd","chainId":369}"""
+                    |> D.decodeString Wallet.decoder
+                    |> (\result ->
+                            case result of
+                                Ok (Wallet.WalletConnected maybeRid _ _) ->
+                                    maybeRid |> Expect.equal (Just 7)
+
+                                _ ->
+                                    Expect.fail "Expected WalletConnected"
+                       )
+        , test "decodes connectRejected message" <|
+            \_ ->
+                """{"tag":"connectRejected","requestId":3}"""
+                    |> D.decodeString Wallet.decoder
+                    |> Expect.equal (Ok (Wallet.WalletConnectRejected 3))
+        , test "decodes connectPending message" <|
+            \_ ->
+                """{"tag":"connectPending","requestId":3}"""
+                    |> D.decodeString Wallet.decoder
+                    |> Expect.equal (Ok (Wallet.WalletConnectPending 3))
+        , test "decodes connectFailed message with reason not_found" <|
+            \_ ->
+                """{"tag":"connectFailed","requestId":3,"reason":"not_found","error":"No wallet extension detected"}"""
+                    |> D.decodeString Wallet.decoder
+                    |> Expect.equal (Ok (Wallet.WalletConnectFailed 3 Wallet.NotFound "No wallet extension detected"))
+        , test "decodes connectFailed message with reason no_accounts" <|
+            \_ ->
+                """{"tag":"connectFailed","requestId":3,"reason":"no_accounts","error":"Wallet returned no accounts"}"""
+                    |> D.decodeString Wallet.decoder
+                    |> Expect.equal (Ok (Wallet.WalletConnectFailed 3 Wallet.NoAccounts "Wallet returned no accounts"))
+        , test "decodes connectFailed message with an unrecognized reason as NetworkError" <|
+            \_ ->
+                """{"tag":"connectFailed","requestId":3,"reason":"whatever","error":"boom"}"""
+                    |> D.decodeString Wallet.decoder
+                    |> Expect.equal (Ok (Wallet.WalletConnectFailed 3 Wallet.NetworkError "boom"))
         , test "decodes disconnected message" <|
             \_ ->
                 """{"tag":"disconnected"}"""

@@ -80,12 +80,33 @@ chainIdIntFuzzer =
         ]
 
 
+{-| A `RequestId` from a small range — small enough that fuzzed sequences
+regularly generate MATCHING ids across messages (exercising the
+accept/stale-drop logic), not just always-mismatched random Ints.
+-}
+requestIdFuzzer : Fuzzer Wallet.RequestId
+requestIdFuzzer =
+    Fuzz.intRange 0 5
+
+
+connectFailureReasonFuzzer : Fuzzer Wallet.ConnectFailureReason
+connectFailureReasonFuzzer =
+    Fuzz.oneOf
+        [ Fuzz.constant Wallet.NotFound
+        , Fuzz.constant Wallet.NoAccounts
+        , Fuzz.constant Wallet.NetworkError
+        ]
+
+
 {-| Generate any Wallet.Msg, including ones with invalid addresses or chain IDs.
 -}
 msgFuzzer : Fuzzer Wallet.Msg
 msgFuzzer =
     Fuzz.oneOf
-        [ Fuzz.map2 Wallet.WalletConnected addressStringFuzzer chainIdIntFuzzer
+        [ Fuzz.map3 Wallet.WalletConnected (Fuzz.maybe requestIdFuzzer) addressStringFuzzer chainIdIntFuzzer
+        , Fuzz.map Wallet.WalletConnectRejected requestIdFuzzer
+        , Fuzz.map Wallet.WalletConnectPending requestIdFuzzer
+        , Fuzz.map3 Wallet.WalletConnectFailed requestIdFuzzer connectFailureReasonFuzzer Fuzz.string
         , Fuzz.constant Wallet.WalletDisconnected
         , Fuzz.map Wallet.ChainChanged chainIdIntFuzzer
         , Fuzz.map Wallet.AccountChanged addressStringFuzzer
@@ -102,18 +123,18 @@ initialStateFuzzer : Fuzzer Wallet.State
 initialStateFuzzer =
     Fuzz.oneOf
         [ Fuzz.constant Wallet.Disconnected
-        , Fuzz.constant Wallet.Connecting
+        , Fuzz.map Wallet.Connecting requestIdFuzzer
         , Fuzz.map Wallet.Error Fuzz.string
         , -- Connected on expected chain
           Fuzz.map
             (\addr ->
-                Wallet.update expectedChain (Wallet.WalletConnected addr 369) Wallet.Disconnected
+                Wallet.update expectedChain (Wallet.WalletConnected Nothing addr 369) Wallet.Disconnected
             )
             validAddressStringFuzzer
         , -- WrongChain
           Fuzz.map
             (\addr ->
-                Wallet.update expectedChain (Wallet.WalletConnected addr 1) Wallet.Disconnected
+                Wallet.update expectedChain (Wallet.WalletConnected Nothing addr 1) Wallet.Disconnected
             )
             validAddressStringFuzzer
         ]
@@ -137,7 +158,7 @@ stateTag state =
         Wallet.ReadOnly ->
             "ReadOnly"
 
-        Wallet.Connecting ->
+        Wallet.Connecting _ ->
             "Connecting"
 
         Wallet.Connected _ ->
@@ -186,7 +207,7 @@ neverCrashesTest =
                 Wallet.ReadOnly ->
                     Expect.pass
 
-                Wallet.Connecting ->
+                Wallet.Connecting _ ->
                     Expect.pass
 
                 Wallet.Connected _ ->

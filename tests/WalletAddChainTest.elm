@@ -90,7 +90,7 @@ decodeTests =
             \_ ->
                 let
                     connected =
-                        Wallet.update pulseChain (Wallet.WalletConnected validAddress 369) Wallet.Disconnected
+                        Wallet.update pulseChain (Wallet.WalletConnected Nothing validAddress 369) Wallet.Disconnected
 
                     afterAdd =
                         Wallet.update pulseChain Wallet.ChainAdded connected

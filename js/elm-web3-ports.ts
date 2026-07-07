@@ -321,6 +321,32 @@ export function setupPorts(app, options = {}) {
     }, 0)
   }
 
+  // Silent auto-reconnect: if we were connected last session and the wallet
+  // still authorizes this site, restore the session without ever prompting.
+  // eth_accounts (unlike eth_requestAccounts/wallet_requestPermissions)
+  // never triggers a permission popup — it just resolves to [] if we're not
+  // already authorized, which we swallow silently (never toast/error on
+  // page load for this).
+  if (typeof window !== 'undefined' && window.ethereum) {
+    let wasConnected = false
+    try { wasConnected = localStorage.getItem('elm-web3:walletConnected') === '1' } catch (_) { /* ignore */ }
+    if (wasConnected) {
+      window.ethereum.request({ method: 'eth_accounts' })
+        .then((accounts) => {
+          if (!accounts || accounts.length === 0) return
+          _activeProvider = window.ethereum
+          return window.ethereum.request({ method: 'eth_chainId' }).then((chainId) => {
+            app.ports.web3Sub.send({
+              tag: 'connected',
+              address: accounts[0],
+              chainId: parseInt(chainId, 16),
+            })
+          })
+        })
+        .catch(() => { /* silent — this is a best-effort background reconnect */ })
+    }
+  }
+
   // ─── eth_subscribe WebSocket plumbing ────────────────────────────────
   // Single shared socket; every Elm subscription multiplexes over it.
   // Reconnect with exponential backoff (1s → 30s) on close; the open
@@ -466,20 +492,45 @@ export function setupPorts(app, options = {}) {
     try {
       switch (cmd.tag) {
         case 'connect': {
-          if (!window.ethereum && rpcUrl) {
-            app.ports.web3Sub.send({ tag: 'readOnly' })
-            return
+          // Own try/catch (not the shared one at the bottom of this
+          // subscribe callback) — a rejected/already-pending permission
+          // request must never be misrouted through the generic
+          // on-chain-transaction 'rejected'/'failed' tags below, which
+          // previously left the Elm-side wallet FSM with no way to tell a
+          // cancelled connect apart from a failed transaction.
+          const { requestId } = cmd
+          try {
+            if (!window.ethereum && rpcUrls.length > 0) {
+              app.ports.web3Sub.send({ tag: 'readOnly' })
+              break
+            }
+            if (!window.ethereum) {
+              app.ports.web3Sub.send({ tag: 'connectFailed', requestId, reason: 'not_found', error: 'No wallet extension detected' })
+              break
+            }
+            const accounts = await _requestAccountsForcePrompt(window.ethereum)
+            if (!accounts || accounts.length === 0) {
+              app.ports.web3Sub.send({ tag: 'connectFailed', requestId, reason: 'no_accounts', error: 'Wallet returned no accounts' })
+              break
+            }
+            const chainId = await window.ethereum.request({ method: 'eth_chainId' })
+            _activeProvider = window.ethereum
+            try { localStorage.setItem('elm-web3:walletConnected', '1') } catch (_) { /* ignore */ }
+            app.ports.web3Sub.send({
+              tag: 'connected',
+              requestId,
+              address: accounts[0],
+              chainId: parseInt(chainId, 16),
+            })
+          } catch (err) {
+            if (err.code === 4001) {
+              app.ports.web3Sub.send({ tag: 'connectRejected', requestId })
+            } else if (err.code === -32002) {
+              app.ports.web3Sub.send({ tag: 'connectPending', requestId })
+            } else {
+              app.ports.web3Sub.send({ tag: 'connectFailed', requestId, reason: 'network', error: err.message || String(err) })
+            }
           }
-          if (!window.ethereum) throw new Error('No wallet found')
-          const accounts = await _requestAccountsForcePrompt(window.ethereum)
-          if (!accounts || accounts.length === 0) throw new Error('Wallet returned no accounts')
-          const chainId = await window.ethereum.request({ method: 'eth_chainId' })
-          _activeProvider = window.ethereum
-          app.ports.web3Sub.send({
-            tag: 'connected',
-            address: accounts[0],
-            chainId: parseInt(chainId, 16),
-          })
           break
         }
 
@@ -507,6 +558,7 @@ export function setupPorts(app, options = {}) {
             }
           }
           _activeProvider = null
+          try { localStorage.removeItem('elm-web3:walletConnected') } catch (_) { /* ignore */ }
           app.ports.web3Sub.send({ tag: 'disconnected' })
           break
         }
@@ -717,30 +769,49 @@ export function setupPorts(app, options = {}) {
           // inside it. Without this, MetaMask-derivatives (Internet Money,
           // Brave Wallet, Rabby) silently return the cached account and the
           // user has no way to switch.
-          const { rdns } = cmd
-          const found = _eip6963Providers.get(rdns)
-          if (!found) throw new Error(`Wallet not found: ${rdns}`)
-          // Revoke any prior permission on the OUTGOING provider so its cached
-          // session doesn't survive across wallet swaps.
-          if (_activeProvider && _activeProvider !== found.provider) {
-            try {
-              await _activeProvider.request({
-                method: 'wallet_revokePermissions',
-                params: [{ eth_accounts: {} }],
-              })
-            } catch (_) { /* unsupported — fine */ }
+          // Own try/catch — same reasoning as 'connect' above.
+          const { rdns, requestId } = cmd
+          try {
+            const found = _eip6963Providers.get(rdns)
+            if (!found) {
+              app.ports.web3Sub.send({ tag: 'connectFailed', requestId, reason: 'not_found', error: `Wallet not found: ${rdns}` })
+              break
+            }
+            // Revoke any prior permission on the OUTGOING provider so its
+            // cached session doesn't survive across wallet swaps.
+            if (_activeProvider && _activeProvider !== found.provider) {
+              try {
+                await _activeProvider.request({
+                  method: 'wallet_revokePermissions',
+                  params: [{ eth_accounts: {} }],
+                })
+              } catch (_) { /* unsupported — fine */ }
+            }
+            const accounts = await _requestAccountsForcePrompt(found.provider)
+            if (!accounts || accounts.length === 0) {
+              app.ports.web3Sub.send({ tag: 'connectFailed', requestId, reason: 'no_accounts', error: 'Wallet returned no accounts' })
+              break
+            }
+            const chainId = await found.provider.request({ method: 'eth_chainId' })
+            // Swap the active provider so all subsequent calls use the selected wallet
+            window.ethereum = found.provider
+            _activeProvider = found.provider
+            try { localStorage.setItem('elm-web3:walletConnected', '1') } catch (_) { /* ignore */ }
+            app.ports.web3Sub.send({
+              tag: 'connected',
+              requestId,
+              address: accounts[0],
+              chainId: parseInt(chainId, 16),
+            })
+          } catch (err) {
+            if (err.code === 4001) {
+              app.ports.web3Sub.send({ tag: 'connectRejected', requestId })
+            } else if (err.code === -32002) {
+              app.ports.web3Sub.send({ tag: 'connectPending', requestId })
+            } else {
+              app.ports.web3Sub.send({ tag: 'connectFailed', requestId, reason: 'network', error: err.message || String(err) })
+            }
           }
-          const accounts = await _requestAccountsForcePrompt(found.provider)
-          if (!accounts || accounts.length === 0) throw new Error('Wallet returned no accounts')
-          const chainId = await found.provider.request({ method: 'eth_chainId' })
-          // Swap the active provider so all subsequent calls use the selected wallet
-          window.ethereum = found.provider
-          _activeProvider = found.provider
-          app.ports.web3Sub.send({
-            tag: 'connected',
-            address: accounts[0],
-            chainId: parseInt(chainId, 16),
-          })
           break
         }
 
@@ -1051,7 +1122,23 @@ export function setupPorts(app, options = {}) {
     window.ethereum.on('accountsChanged', (accounts) => {
       try {
         if (accounts.length === 0) {
-          app.ports.web3Sub.send({ tag: 'disconnected' })
+          // Some wallets (OKX among them) have been observed firing a spurious
+          // accountsChanged([]) around an unrelated rejected request, even
+          // though the extension still holds a live eth_accounts permission.
+          // Silently re-check before tearing down connection state — a real
+          // disconnect/lock still resolves to [] here, so this costs one extra
+          // no-prompt RPC round trip and closes the false-positive window.
+          window.ethereum.request({ method: 'eth_accounts' })
+            .then((current) => {
+              if (!current || current.length === 0) {
+                app.ports.web3Sub.send({ tag: 'disconnected' })
+              } else {
+                app.ports.web3Sub.send({ tag: 'accountChanged', address: current[0] })
+              }
+            })
+            .catch(() => {
+              app.ports.web3Sub.send({ tag: 'disconnected' })
+            })
         } else {
           app.ports.web3Sub.send({ tag: 'accountChanged', address: accounts[0] })
         }
@@ -1094,15 +1181,35 @@ export function setupExternalProvider(app, provider) {
     const id = typeof chainId === 'string' ? parseInt(chainId, 16) : chainId
     app.ports.web3Sub.send({ tag: 'chainChanged', chainId: id })
   })
+  // Some wallets (OKX among them) have been observed firing a spurious
+  // accountsChanged([]) / disconnect around an unrelated rejected request,
+  // even though the extension still holds a live eth_accounts permission.
+  // Silently re-check before tearing down connection state — a real
+  // disconnect/lock still resolves to [] here, so this costs one extra
+  // no-prompt RPC round trip and closes the false-positive window.
+  function recheckOrDisconnect() {
+    Promise.resolve(provider.request({ method: 'eth_accounts' }))
+      .then((current) => {
+        if (!current || current.length === 0) {
+          app.ports.web3Sub.send({ tag: 'disconnected' })
+        } else {
+          app.ports.web3Sub.send({ tag: 'accountChanged', address: current[0] })
+        }
+      })
+      .catch(() => {
+        app.ports.web3Sub.send({ tag: 'disconnected' })
+      })
+  }
+
   provider.on('accountsChanged', (accounts) => {
     if (!accounts || accounts.length === 0) {
-      app.ports.web3Sub.send({ tag: 'disconnected' })
+      recheckOrDisconnect()
     } else {
       app.ports.web3Sub.send({ tag: 'accountChanged', address: accounts[0] })
     }
   })
   provider.on('disconnect', () => {
-    app.ports.web3Sub.send({ tag: 'disconnected' })
+    recheckOrDisconnect()
   })
 }
 
