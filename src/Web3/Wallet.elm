@@ -1,5 +1,6 @@
 module Web3.Wallet exposing
     ( State(..)
+    , ConnectedInfo
     , RequestId
     , ConnectFailureReason(..)
     , Msg(..)
@@ -76,7 +77,7 @@ port and present the list to the user; call `selectWallet rdns` when they pick.
 For native balance queries, use `Web3.Balance`. For adding chains, use `addChain` with
 a `ChainConfig` record and follow up with `switchChain`.
 
-@docs State, RequestId, ConnectFailureReason, Msg, WalletCmd, WalletProvider, ChainConfig
+@docs State, ConnectedInfo, RequestId, ConnectFailureReason, Msg, WalletCmd, WalletProvider, ChainConfig
 @docs update, startConnect, timeoutConnect, isConnecting, connectingRequestId
 @docs connect, disconnect, switchChain, selectWallet, addChain
 @docs watchAsset, requestPermissions, getPermissions
