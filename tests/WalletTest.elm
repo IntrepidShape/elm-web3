@@ -118,6 +118,18 @@ requestIdTests =
             \_ ->
                 Wallet.startConnect 42 Wallet.Disconnected
                     |> Expect.equal (Wallet.Connecting 42)
+        , test "startConnect while already Connecting supersedes with the new id (overlapping attempts)" <|
+            \_ ->
+                Wallet.startConnect 2 (Wallet.Connecting 1)
+                    |> Expect.equal (Wallet.Connecting 2)
+        , test "a superseded attempt's late response is dropped once startConnect has moved on" <|
+            \_ ->
+                let
+                    superseded =
+                        Wallet.startConnect 2 (Wallet.Connecting 1)
+                in
+                Wallet.update pulseChain (Wallet.WalletConnected (Just 1) validAddress 369) superseded
+                    |> Expect.equal (Wallet.Connecting 2)
         ]
 
 

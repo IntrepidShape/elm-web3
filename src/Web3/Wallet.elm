@@ -56,8 +56,9 @@ port and present the list to the user; call `selectWallet rdns` when they pick.
 
 1. User clicks "Connect" → mint a fresh `RequestId` (an incrementing counter
    you own), call `startConnect requestId` on state, send `connect requestId`
-   via port. Gate the click on `not (isConnecting state)` so a second click
-   while one is already in flight never double-fires.
+   via port. Do this unconditionally, even if already `Connecting` — a
+   second click (or picking a different wallet mid-prompt) is meant to
+   supersede the in-flight attempt, not be swallowed as a no-op.
 2. `WalletsDiscovered providers` arrives → show picker if `providers` is non-empty.
 3. User picks a wallet → mint a fresh `RequestId` the same way, send
    `selectWallet requestId rdns` via port.
@@ -388,11 +389,17 @@ Call this when the user clicks the connect button — mint a fresh `RequestId`
     , web3Cmd (Wallet.encode (Wallet.connect requestId))
     )
 
-Valid transitions: `Disconnected → Connecting`, `Error _ → Connecting`.
-All other states are unchanged — in particular, calling this while already
-`Connecting` is a no-op, which is exactly what you want: guard the connect
-button's click handler on `not (isConnecting state)` rather than relying on
-this to somehow queue or replace the in-flight request.
+Valid transitions: `Disconnected → Connecting`, `Error _ → Connecting`, and
+— deliberately — `Connecting _ → Connecting` with the NEW id. That last one
+is what lets overlapping attempts work elegantly: the user can click Connect
+again (or pick a different wallet mid-prompt) while one is already in
+flight, and the new attempt simply supersedes the old one. No app-side
+"already connecting, ignore this click" guard is needed — `update` already
+drops any response tagged with a `RequestId` that no longer matches the
+CURRENT `Connecting` id, so a stale response from the superseded attempt
+(if it ever resolves at all) is safely a no-op. `Connected`/`WrongChain`/
+`ReadOnly` remain no-ops here, same as before — there's no "already
+connected, reconnect" use case this module needs to support.
 
 -}
 startConnect : RequestId -> State -> State
@@ -402,6 +409,9 @@ startConnect rid state =
             Connecting rid
 
         Error _ ->
+            Connecting rid
+
+        Connecting _ ->
             Connecting rid
 
         _ ->
@@ -429,9 +439,11 @@ timeoutConnect rid state =
             state
 
 
-{-| True while a connect attempt is in flight — use this to gate the connect
-button/click-handler so a second click never double-fires `eth_requestAccounts`
-while the wallet is still processing the first one.
+{-| True while a connect attempt is in flight — use this to drive a
+"Connecting…" spinner/disabled visual state. Not meant for gating the click
+handler itself: `startConnect` deliberately allows a fresh attempt to
+supersede one already in flight (see its doc comment), so the click handler
+should call `startConnect` unconditionally rather than checking this first.
 -}
 isConnecting : State -> Bool
 isConnecting state =
