@@ -130,6 +130,11 @@ type ConnectFailureReason
     | NetworkError
 
 
+{-| The account details of a live wallet connection: the connected `address`
+and the `chainId` it is currently on. Carried by both [`Connected`](#State) and
+[`WrongChain`](#State) — the latter still knows who is connected, just on the
+wrong network.
+-}
 type alias ConnectedInfo =
     { address : T.Address
     , chainId : T.ChainId

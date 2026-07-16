@@ -1,5 +1,31 @@
 # Changelog
 
+## 2.0.0 — 2026-07-16
+
+### Changed — RequestId-tracked wallet connect (BREAKING)
+
+A single wallet connect attempt is now identified by a `RequestId` so a stale
+response or timeout from a superseded attempt (user clicked Connect, gave up,
+clicked again) can never clobber a newer one.
+
+- **`State.Connecting`** now carries the in-flight `RequestId`:
+  `Connecting` → `Connecting RequestId`. **Breaking** — pattern matches on
+  `Connecting` must add the argument (`Connecting _` or `Connecting reqId`).
+- **`Msg.WalletConnected`** now leads with the originating request:
+  `WalletConnected String Int` → `WalletConnected (Maybe RequestId) String Int`.
+- New `Msg` variants distinguishing the three non-success outcomes:
+  `WalletConnectRejected RequestId`, `WalletConnectPending RequestId`,
+  `WalletConnectFailed RequestId ConnectFailureReason String`.
+
+### Added
+
+- **`type alias RequestId = Int`** — caller-owned connect-attempt counter.
+- **`type ConnectFailureReason`** — `NotFound | NoAccounts | NetworkError`.
+- **`type alias ConnectedInfo`** — now exposed (`{ address, chainId }`).
+- **`isConnecting`**, **`connectingRequestId`**, **`timeoutConnect`** —
+  state helpers; `startConnect` can now supersede an in-flight attempt.
+
+
 ## 1.4.4 — 2026-07-02
 
 ### Verification — the proof corpus is sorry-free
