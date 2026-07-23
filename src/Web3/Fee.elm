@@ -120,7 +120,7 @@ The `id` is echoed back in the `maxPriorityFee` response.
 
     web3Cmd (Fee.getMaxPriorityFee "priority-1")
 
-This is a standalone encoder that produces the port value directly — it is
+This is a standalone encoder that produces the port value directly -- it is
 deliberately NOT a new variant of [`Cmd`](#Cmd). Adding a variant to an
 exposed custom type is a MAJOR change under Elm's enforced semver (every
 `case` expression over `Cmd` or `Msg` in consumer code would stop
@@ -146,7 +146,7 @@ would be a MAJOR version bump.
 
     case D.decodeValue Fee.maxPriorityFeeDecoder incoming of
         Ok ( id, wei ) ->
-            -- wei : BigInt — suggested maxPriorityFeePerGas
+            -- wei : BigInt -- suggested maxPriorityFeePerGas
         Err _ ->
             -- not a maxPriorityFee response
 

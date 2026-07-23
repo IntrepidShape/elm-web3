@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Docs — ASCII-only doc comments (registry-critical, CI-enforced)
+
+All doc comments are now pure ASCII. elm 0.19.1's client-side docs.json
+parser has a byte-position-sensitive bug with raw multi-byte UTF-8: depending
+on where a character lands in the generated docs.json, `elm diff` /
+`elm bump` / `elm publish` fail with PROBLEM LOADING DOCS for every consumer,
+permanently (published bytes are immutable). It bricked the sibling ui
+package's published 2.3.0 docs (a `>=` sign at byte offset 65709). This
+package's published docs all decode today, but only by byte-layout luck --
+pure-ASCII docs are immune by construction, so CI now rejects non-ASCII in
+docs.json.
+
+
 ## 2.0.0 — 2026-07-16
 
 ### Changed — RequestId-tracked wallet connect (BREAKING)

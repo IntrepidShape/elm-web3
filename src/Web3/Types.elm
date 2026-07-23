@@ -18,7 +18,7 @@ module Web3.Types exposing
 
 {-| Core opaque types for EVM interaction.
 
-All types are opaque — you can't accidentally pass a `TxHash` where an `Address`
+All types are opaque -- you can't accidentally pass a `TxHash` where an `Address`
 is expected. Construction validates format and returns `Maybe` so invalid input
 is a compile-time-visible code path, not a runtime crash.
 
@@ -27,7 +27,7 @@ is a compile-time-visible code path, not a runtime crash.
     -- Validate on input boundary (e.g. from a URL param or user field):
     case T.address rawString of
         Just addr ->
-            -- addr : T.Address — safe to use everywhere
+            -- addr : T.Address -- safe to use everywhere
         Nothing ->
             -- show validation error
 
@@ -35,7 +35,7 @@ is a compile-time-visible code path, not a runtime crash.
     T.encodeBlockNumber T.Latest    == Json.Encode.string "latest"
     T.encodeBlockNumber (T.BlockNum 1000) == Json.Encode.int 1000
 
-`Wei` is an alias for `Web3.BigInt.BigInt` — use `Web3.Units.formatEther` to
+`Wei` is an alias for `Web3.BigInt.BigInt` -- use `Web3.Units.formatEther` to
 convert to a human-readable string.
 
 @docs Address, TxHash, BlockNumber, ChainId, Wei, HexString
@@ -63,7 +63,7 @@ type TxHash
     = TxHash String
 
 
-{-| A block number — specific or a tag.
+{-| A block number -- specific or a tag.
 -}
 type BlockNumber
     = BlockNum Int
@@ -84,7 +84,7 @@ type HexString
     = HexString String
 
 
-{-| Wei amount as a string (uint256 — too large for Int).
+{-| Wei amount as a string (uint256 -- too large for Int).
 -}
 type alias Wei =
     BigInt

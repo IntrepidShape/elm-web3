@@ -55,7 +55,7 @@ Use the `SignState` machine to track the lifecycle of a single sign request.
         Ok sig -> -- sig is the 0x-prefixed signature
         Err _ -> -- not a sign response
 
-**Sign state machine** — tracks one in-flight request:
+**Sign state machine** -- tracks one in-flight request:
 
     type SignState
         = SignIdle
@@ -155,7 +155,7 @@ will display the raw message to the user before signing.
 
     web3Cmd (Sign.personalSign "login-1" signerAddress "Sign in to MyDapp")
 
-Responses arrive on the same `signed` tag as EIP-712 — use `signatureDecoder`.
+Responses arrive on the same `signed` tag as EIP-712 -- use `signatureDecoder`.
 
 -}
 personalSign : String -> T.Address -> String -> E.Value
@@ -170,11 +170,11 @@ personalSign id from message =
 
 {-| Signing state machine. Tracks the lifecycle of a single sign request.
 
-  - `SignIdle` — no sign request in progress
-  - `SignPending id` — awaiting user approval for request `id`
-  - `Signed id sig` — user approved; `sig` is the 0x-prefixed signature
-  - `SignFailed id err` — signing failed (wallet error, network error)
-  - `SignRejected id` — user explicitly cancelled in wallet UI
+  - `SignIdle` -- no sign request in progress
+  - `SignPending id` -- awaiting user approval for request `id`
+  - `Signed id sig` -- user approved; `sig` is the 0x-prefixed signature
+  - `SignFailed id err` -- signing failed (wallet error, network error)
+  - `SignRejected id` -- user explicitly cancelled in wallet UI
 
 -}
 type SignState
@@ -278,7 +278,7 @@ signUpdate msg state =
 
     case D.decodeValue Sign.signatureDecoder incoming of
         Ok sig ->
-            -- sig : String — the 0x-prefixed signature
+            -- sig : String -- the 0x-prefixed signature
         Err _ ->
             -- handle decode error
 
@@ -308,12 +308,12 @@ address (`personal_ecRecover`).
             }
         )
 
-The recovered address arrives on the `recovered` tag — decode it with
+The recovered address arrives on the `recovered` tag -- decode it with
 [`recoveredDecoder`](#recoveredDecoder) and compare it against the address
 that claims to have signed. Failures arrive on the standard `failed` tag.
 
 This is a standalone encoder returning the port value directly (like
-[`personalSign`](#personalSign)) rather than a new `Cmd`/`Msg` variant —
+[`personalSign`](#personalSign)) rather than a new `Cmd`/`Msg` variant --
 extending an exposed custom type is a MAJOR change under Elm's enforced
 semver, so additive functions keep this MINOR-safe.
 
@@ -332,7 +332,7 @@ verify { id, message, signature } =
 
     case D.decodeValue Sign.recoveredDecoder incoming of
         Ok { id, address } ->
-            -- address : String — the 0x-prefixed recovered signer
+            -- address : String -- the 0x-prefixed recovered signer
         Err _ ->
             -- not a recovered response
 

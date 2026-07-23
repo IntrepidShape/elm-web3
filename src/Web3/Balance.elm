@@ -9,7 +9,7 @@ module Web3.Balance exposing
 {-| Typed balance query with correlation IDs.
 
 This module provides a dedicated, typed interface for querying native ETH/PLS
-balances. Multiple queries can be in flight simultaneously — each carries a
+balances. Multiple queries can be in flight simultaneously -- each carries a
 correlation `id` that is echoed back so responses can be matched.
 
     -- Send via your port:

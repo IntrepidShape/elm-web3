@@ -98,12 +98,12 @@ readCall opts =
         }
 
 
-{-| Create a read call from **pre-built hex calldata** — the result of
+{-| Create a read call from **pre-built hex calldata** -- the result of
 [`Web3.Abi.Calldata.calldata`](Web3-Abi-Calldata#calldata). The JS port
 bridge sends `data` directly without re-encoding, so the wire path is
 entirely pure-Elm: no method-name string, no arg encoding outside of Elm.
 
-    -- balanceOf(address) — selector baked at codegen time
+    -- balanceOf(address) -- selector baked at codegen time
     balanceOf : T.Address -> T.Address -> ReadCall BigInt
     balanceOf contract holder =
         readCallRaw
@@ -113,7 +113,7 @@ entirely pure-Elm: no method-name string, no arg encoding outside of Elm.
             , id = "balanceOf"
             }
 
-The `data` argument must be a complete `"0x…"` calldata string including the
+The `data` argument must be a complete `"0x..."` calldata string including the
 4-byte function selector.
 -}
 readCallRaw :
@@ -143,7 +143,7 @@ withBlock block (ReadCall call) =
     ReadCall { call | block = block }
 
 
-{-| Add a `from` address — turns eth\_call into a simulation of a write.
+{-| Add a `from` address -- turns eth\_call into a simulation of a write.
 Catches reverts without broadcasting.
 
     simulateBuy tokenAddress amount userAddress

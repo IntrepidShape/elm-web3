@@ -77,7 +77,7 @@ writeCall opts =
         }
 
 
-{-| Create a write call from pre-built hex calldata — the result of
+{-| Create a write call from pre-built hex calldata -- the result of
 [`Web3.Abi.Calldata.calldata`](Web3-Abi-Calldata#calldata). The JS port
 bridge sends `data` directly without re-encoding.
 

@@ -71,7 +71,7 @@ type alias Chain =
 {-| PulseChain mainnet (chain ID 369).
 
 The block explorer URL points to scan.pulsechain.com served via Pinata's IPFS
-gateway. This is the proper decentralised access method — the same explorer,
+gateway. This is the proper decentralised access method -- the same explorer,
 but fetched from IPFS rather than a centralised host.
 
 -}

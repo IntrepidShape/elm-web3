@@ -30,13 +30,13 @@ module Web3.Wallet exposing
 
 {-| Wallet connection state machine.
 
-The wallet is modeled as an explicit state — you can't accidentally
+The wallet is modeled as an explicit state -- you can't accidentally
 call a contract without a connected wallet because the compiler
 won't give you an `Address` from a `Disconnected` state.
 
     case model.wallet of
         Connected info ->
-            -- info.address : T.Address — only available here
+            -- info.address : T.Address -- only available here
             buy info.address amount
 
         WrongChain _ _ ->
@@ -50,29 +50,29 @@ won't give you an `Address` from a `Disconnected` state.
         _ ->
             showConnectButton
 
-**EIP-6963 multi-wallet discovery** — listen for `WalletsDiscovered` on the
+**EIP-6963 multi-wallet discovery** -- listen for `WalletsDiscovered` on the
 port and present the list to the user; call `selectWallet rdns` when they pick.
 
 **Typical connection flow:**
 
-1. User clicks "Connect" → mint a fresh `RequestId` (an incrementing counter
+1. User clicks "Connect" -> mint a fresh `RequestId` (an incrementing counter
    you own), call `startConnect requestId` on state, send `connect requestId`
-   via port. Do this unconditionally, even if already `Connecting` — a
+   via port. Do this unconditionally, even if already `Connecting` -- a
    second click (or picking a different wallet mid-prompt) is meant to
    supersede the in-flight attempt, not be swallowed as a no-op.
-2. `WalletsDiscovered providers` arrives → show picker if `providers` is non-empty.
-3. User picks a wallet → mint a fresh `RequestId` the same way, send
+2. `WalletsDiscovered providers` arrives -> show picker if `providers` is non-empty.
+3. User picks a wallet -> mint a fresh `RequestId` the same way, send
    `selectWallet requestId rdns` via port.
-4. `WalletConnected (Just requestId) addr chainId` arrives → `update` checks
+4. `WalletConnected (Just requestId) addr chainId` arrives -> `update` checks
    the id against the active `Connecting` request (dropping it silently if a
    newer attempt has since superseded it) and transitions to `Connected` or
    `WrongChain`.
 5. If `WalletConnectRejected`/`WalletConnectFailed` arrives instead, `update`
    returns to `Disconnected`/`Error` respectively (again only if the id still
    matches). Arm a timeout (e.g. 30s via `Process.sleep`) when entering
-   `Connecting`; on fire, call `timeoutConnect requestId` — a no-op if the
+   `Connecting`; on fire, call `timeoutConnect requestId` -- a no-op if the
    request already resolved.
-6. If `WrongChain` → send `switchChain expectedChain` via port.
+6. If `WrongChain` -> send `switchChain expectedChain` via port.
 
 For native balance queries, use `Web3.Balance`. For adding chains, use `addChain` with
 a `ChainConfig` record and follow up with `switchChain`.
@@ -93,12 +93,12 @@ import Web3.Types as T
 
 {-| Wallet connection state. Every possible state is explicit.
 
-  - `Disconnected` — no wallet detected, no rpcUrl configured
-  - `ReadOnly` — rpcUrl is present but no wallet; reads work, writes will fail
-  - `Connecting` — wallet connection in progress
-  - `Connected` — wallet connected on the expected chain
-  - `WrongChain` — wallet connected but on the wrong chain
-  - `Error` — unrecoverable error
+  - `Disconnected` -- no wallet detected, no rpcUrl configured
+  - `ReadOnly` -- rpcUrl is present but no wallet; reads work, writes will fail
+  - `Connecting` -- wallet connection in progress
+  - `Connected` -- wallet connected on the expected chain
+  - `WrongChain` -- wallet connected but on the wrong chain
+  - `Error` -- unrecoverable error
 
 -}
 type State
@@ -113,7 +113,7 @@ type State
 {-| Identifies a single connect attempt so a stale response or timeout from a
 superseded attempt (e.g. the user clicked Connect, gave up, and clicked again)
 can never clobber a newer one. Callers own the counter (increment on every
-`startConnect` call) — this module only compares ids, it never generates them.
+`startConnect` call) -- this module only compares ids, it never generates them.
 -}
 type alias RequestId =
     Int
@@ -121,7 +121,7 @@ type alias RequestId =
 
 {-| Why a connect attempt failed to resolve into `Connected`/`WrongChain`.
 Does not cover explicit rejection ([`WalletConnectRejected`](#Msg)) or a
-request that's still pending elsewhere ([`WalletConnectPending`](#Msg)) —
+request that's still pending elsewhere ([`WalletConnectPending`](#Msg)) --
 those are distinct, expected outcomes, not failures.
 -}
 type ConnectFailureReason
@@ -132,7 +132,7 @@ type ConnectFailureReason
 
 {-| The account details of a live wallet connection: the connected `address`
 and the `chainId` it is currently on. Carried by both [`Connected`](#State) and
-[`WrongChain`](#State) — the latter still knows who is connected, just on the
+[`WrongChain`](#State) -- the latter still knows who is connected, just on the
 wrong network.
 -}
 type alias ConnectedInfo =
@@ -385,8 +385,8 @@ update expectedChain msg state =
 
 {-| Transition to `Connecting requestId` before sending the `connect` port command.
 
-Call this when the user clicks the connect button — mint a fresh `RequestId`
-(an incrementing counter you own) — then send `connect` via the port:
+Call this when the user clicks the connect button -- mint a fresh `RequestId`
+(an incrementing counter you own) -- then send `connect` via the port:
 
     ( { model
         | wallet = Wallet.startConnect requestId model.wallet
@@ -395,16 +395,16 @@ Call this when the user clicks the connect button — mint a fresh `RequestId`
     , web3Cmd (Wallet.encode (Wallet.connect requestId))
     )
 
-Valid transitions: `Disconnected → Connecting`, `Error _ → Connecting`, and
-— deliberately — `Connecting _ → Connecting` with the NEW id. That last one
+Valid transitions: `Disconnected -> Connecting`, `Error _ -> Connecting`, and
+-- deliberately -- `Connecting _ -> Connecting` with the NEW id. That last one
 is what lets overlapping attempts work elegantly: the user can click Connect
 again (or pick a different wallet mid-prompt) while one is already in
 flight, and the new attempt simply supersedes the old one. No app-side
-"already connecting, ignore this click" guard is needed — `update` already
+"already connecting, ignore this click" guard is needed -- `update` already
 drops any response tagged with a `RequestId` that no longer matches the
 CURRENT `Connecting` id, so a stale response from the superseded attempt
 (if it ever resolves at all) is safely a no-op. `Connected`/`WrongChain`/
-`ReadOnly` remain no-ops here, same as before — there's no "already
+`ReadOnly` remain no-ops here, same as before -- there's no "already
 connected, reconnect" use case this module needs to support.
 
 -}
@@ -425,7 +425,7 @@ startConnect rid state =
 
 
 {-| Time out a `Connecting requestId` back to `Disconnected` if it's still
-the active request — a no-op if the request already resolved (into
+the active request -- a no-op if the request already resolved (into
 `Connected`, `WrongChain`, `Error`, or back to `Disconnected`) or has already
 been superseded by a newer one. Call this from a `Process.sleep`-armed
 timeout started alongside `startConnect`, mirroring this codebase's existing
@@ -445,8 +445,8 @@ timeoutConnect rid state =
             state
 
 
-{-| True while a connect attempt is in flight — use this to drive a
-"Connecting…" spinner/disabled visual state. Not meant for gating the click
+{-| True while a connect attempt is in flight -- use this to drive a
+"Connecting..." spinner/disabled visual state. Not meant for gating the click
 handler itself: `startConnect` deliberately allows a fresh attempt to
 supersede one already in flight (see its doc comment), so the click handler
 should call `startConnect` unconditionally rather than checking this first.
@@ -726,7 +726,7 @@ decoder =
 
 {-| Decode the JS-supplied `reason` string on a `connectFailed` message.
 Defaults to `NetworkError` for anything unrecognized rather than failing the
-whole decoder — a forwards-compatible reason string from a newer JS build
+whole decoder -- a forwards-compatible reason string from a newer JS build
 should still degrade to a generic (but real) error, not crash the app.
 -}
 decodeConnectFailureReason : String -> D.Decoder ConnectFailureReason

@@ -36,8 +36,21 @@ jobs:
       - name: Verify docs build
         run: elm make --docs=/tmp/docs.json
 
+      # elm 0.19.1's client-side docs.json parser has a byte-position-sensitive
+      # bug with raw multi-byte UTF-8: depending on where a character lands in
+      # the file, elm diff/bump/publish fail with PROBLEM LOADING DOCS for every
+      # consumer, permanently (published bytes are immutable). Pure-ASCII docs
+      # are immune, so doc comments must stay ASCII.
+      - name: Docs must be pure ASCII (elm 0.19.1 parser bug guard)
+        run: |
+          if grep -qP '[^\x00-\x7F]' /tmp/docs.json; then
+            echo 'docs.json contains raw non-ASCII bytes; replace them with ASCII in doc comments'
+            grep -nP '[^\x00-\x7F]' /tmp/docs.json | head -5
+            exit 1
+          fi
+
       - name: Run test suite
-        run: npx --yes elm-test --compiler /usr/local/bin/elm
+        run: npx --yes elm-test@0.19.1-revision12 --compiler /usr/local/bin/elm
 
   tlc:
     name: Model-check TLA+ specs (TLC)

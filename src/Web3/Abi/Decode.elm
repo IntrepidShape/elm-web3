@@ -80,7 +80,7 @@ uint256 =
             )
 
 
-{-| Decode a uint8 return value as an Elm Int (validated 0–255).
+{-| Decode a uint8 return value as an Elm Int (validated 0-255).
 -}
 uint8 : D.Decoder Int
 uint8 =
@@ -100,7 +100,7 @@ uint8 =
             )
 
 
-{-| Decode a uint16 return value as an Elm Int (validated 0–65535).
+{-| Decode a uint16 return value as an Elm Int (validated 0-65535).
 -}
 uint16 : D.Decoder Int
 uint16 =
@@ -120,7 +120,7 @@ uint16 =
             )
 
 
-{-| Decode a uint32 return value as an Elm Int (validated 0–4294967295).
+{-| Decode a uint32 return value as an Elm Int (validated 0-4294967295).
 -}
 uint32 : D.Decoder Int
 uint32 =
@@ -403,7 +403,7 @@ decodeRevertReason hex =
 
 
 {-| Parse a hex string (no 0x prefix) as an Int. Returns 0 on any error.
-Only handles values that fit in JS/Elm Int — fine for string lengths.
+Only handles values that fit in JS/Elm Int -- fine for string lengths.
 -}
 hexToInt : String -> Int
 hexToInt h =
@@ -533,7 +533,7 @@ utf8Help bytes acc =
 
 {-| Decode a typed Solidity custom error (`error InsufficientBalance(uint256
 have, uint256 want)`) from raw revert data, given selector fragments the app
-bakes at codegen time — the same no-runtime-keccak philosophy as
+bakes at codegen time -- the same no-runtime-keccak philosophy as
 `Web3.Abi.Calldata` selectors.
 
     fragments =
@@ -548,13 +548,13 @@ bakes at codegen time — the same no-runtime-keccak philosophy as
     --> Just { name = "InsufficientBalance", args = [ "5", "10" ] }
 
 `decodeArgs` receives the ABI-encoded argument tail as bare hex (no `0x`,
-selector already stripped) and renders each argument to a display string —
+selector already stripped) and renders each argument to a display string --
 build it from this module's slot readers.
 
 Precedence, decided: this function REFUSES the standard selectors
 `08c379a0` (`Error(string)`) and `4e487b71` (`Panic(uint256)`) so it
 composes with [`decodeRevertReason`](#decodeRevertReason) unambiguously in
-either order — each decoder has a disjoint domain.
+either order -- each decoder has a disjoint domain.
 
 Returns `Nothing` for: standard selectors, unknown selectors, payloads
 shorter than a selector, or a fragment whose `decodeArgs` fails.

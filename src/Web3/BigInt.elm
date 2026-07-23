@@ -27,7 +27,7 @@ module Web3.BigInt exposing
 Supports the full uint256 range (0 to 2^256-1) and int256 range.
 Implemented as a base-10^7 digit list with no external dependencies.
 
-All values crossing the port boundary are decimal strings — this module
+All values crossing the port boundary are decimal strings -- this module
 handles the conversion safely.
 
 @docs BigInt
@@ -62,7 +62,7 @@ type BigInt
 Each "digit" stores values 0..9,999,999.
 Digits are stored little-endian (index 0 = least significant).
 
-Safety: digit × digit + carry ≤ (10^7-1)² + (10^7-1) ≈ 10^14 < 2^53.
+Safety: digit x digit + carry <= (10^7-1)^2 + (10^7-1) ~= 10^14 < 2^53.
 No overflow in Elm's Int (backed by a 64-bit float with 53-bit mantissa).
 
 -}
@@ -292,7 +292,7 @@ padLeft n s =
 **without** a `"0x"` prefix or leading zeros.
 
 Returns `"0"` for zero. For negative integers, the sign is dropped and the
-absolute value is rendered — callers needing two's-complement should do the
+absolute value is rendered -- callers needing two's-complement should do the
 twiddling themselves (or use `Web3.Abi.Calldata.int256`).
 
     toHexString (fromInt 0)     == "0"

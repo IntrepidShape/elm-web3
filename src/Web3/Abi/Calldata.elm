@@ -16,14 +16,14 @@ module Web3.Abi.Calldata exposing
 
 {-| Pure-Elm ABI calldata encoding for contract calls.
 
-Produces the exact hex bytes that go on the wire — selector + ABI-encoded
-parameters — without any JavaScript surface. The result of
-[`calldata`](#calldata) is a `"0x…"` string suitable for the `data` field
+Produces the exact hex bytes that go on the wire -- selector + ABI-encoded
+parameters -- without any JavaScript surface. The result of
+[`calldata`](#calldata) is a `"0x..."` string suitable for the `data` field
 of `eth_call` / `eth_sendTransaction`.
 
 The encoder follows the Solidity ABI specification's "head/tail" layout:
 
-  - **Static types** (`address`, `uintN`, `intN`, `bool`, `bytesN` for `N ≤ 32`)
+  - **Static types** (`address`, `uintN`, `intN`, `bool`, `bytesN` for `N <= 32`)
     occupy 32 bytes inline in the head section.
   - **Dynamic types** (`string`, `bytes`, `T[]`, tuples containing any dynamic
     field) occupy 32 bytes in the head holding the **offset** of their data
@@ -32,11 +32,11 @@ The encoder follows the Solidity ABI specification's "head/tail" layout:
 
 Codegen tools should *bake the 4-byte selector at codegen time* (computed via
 keccak256 of the function signature) and pass it to [`calldata`](#calldata).
-That keeps the runtime entirely in Elm — no JS hash function needed.
+That keeps the runtime entirely in Elm -- no JS hash function needed.
 
-    -- balanceOf(address) — selector is keccak256("balanceOf(address)")[:4] = 70a08231
+    -- balanceOf(address) -- selector is keccak256("balanceOf(address)")[:4] = 70a08231
     calldata "70a08231" [ address holder ]
-        == "0x70a08231000000000000000000000000abcd…"
+        == "0x70a08231000000000000000000000000abcd..."
 
     -- approve(address,uint256)
     calldata "095ea7b3"
@@ -44,7 +44,7 @@ That keeps the runtime entirely in Elm — no JS hash function needed.
         , uint256 amount
         ]
 
-    -- transferBatch(address[], uint256[]) — dynamic
+    -- transferBatch(address[], uint256[]) -- dynamic
     calldata "deadbeef"
         [ list address recipients
         , list uint256 amounts
@@ -66,7 +66,7 @@ import Web3.Types as T
 -- TYPES ---------------------------------------------------------------------
 
 
-{-| A piece of an ABI parameter list — either a static 32-byte chunk or a
+{-| A piece of an ABI parameter list -- either a static 32-byte chunk or a
 dynamic blob that lives in the tail.
 
 The internals are deliberately opaque: callers construct `Slot`s via the
@@ -112,7 +112,7 @@ uint256 b =
 [`uint256`](#uint256). Width is a hint to callers; on the wire all unsigned
 integers up to 256 bits occupy one 32-byte slot.
 
-Bounds-checking is the caller's responsibility — a value exceeding `2^n - 1`
+Bounds-checking is the caller's responsibility -- a value exceeding `2^n - 1`
 is encoded as `uint256` and will revert on-chain in `solc 0.8+`.
 -}
 uintN : Int -> BigInt -> Slot
@@ -124,7 +124,7 @@ uintN _ b =
 bytes.
 
     int256 (BigInt.fromInt -1)
-    --> 0xffffffff…ffff  (32 bytes of 0xff)
+    --> 0xffffffff...ffff  (32 bytes of 0xff)
 
 -}
 int256 : BigInt -> Slot
@@ -163,7 +163,7 @@ bool b =
         )
 
 
-{-| `bytes32` — 32 bytes of arbitrary data, accepting either `"0x…"` or bare
+{-| `bytes32` -- 32 bytes of arbitrary data, accepting either `"0x..."` or bare
 hex. Right-padded with zeros if shorter than 32 bytes.
 -}
 bytes32 : String -> Slot
@@ -179,10 +179,10 @@ bytes32 hex =
     Static (padRightHex sLEN truncated)
 
 
-{-| `bytesN` for `N ∈ {1..32}`. Right-padded to 32 bytes.
+{-| `bytesN` for `N in {1..32}`. Right-padded to 32 bytes.
 
     bytesN 4 "0xdeadbeef"
-    --> 0xdeadbeef00000000…00 (32 bytes total)
+    --> 0xdeadbeef00000000...00 (32 bytes total)
 
 -}
 bytesN : Int -> String -> Slot
@@ -216,7 +216,7 @@ string s =
     Dynamic { tail = encodeDynamicBytes utf8 }
 
 
-{-| Raw bytes (`bytes`), accepted as `"0x…"` or bare hex. Encoded as a
+{-| Raw bytes (`bytes`), accepted as `"0x..."` or bare hex. Encoded as a
 length-prefixed dynamic blob.
 -}
 bytes : String -> Slot
@@ -293,12 +293,12 @@ calldata hex string.
 
 The selector is **bare hex** (no `"0x"` prefix), exactly 8 characters
 (4 bytes). Codegen tools should compute this at codegen time via
-`keccak256(signature).slice(0, 8)` and bake it as a constant — this module
+`keccak256(signature).slice(0, 8)` and bake it as a constant -- this module
 intentionally does not include a keccak implementation, so it stays pure
 data layout.
 
     calldata "70a08231" [ address holder ]
-    --> "0x70a08231000000…<holder padded to 32 bytes>"
+    --> "0x70a08231000000...<holder padded to 32 bytes>"
 
 -}
 calldata : String -> List Slot -> String
@@ -561,10 +561,10 @@ hexNibble n =
 {-| Encode an Elm `Char` as one or more UTF-8 bytes. Elm's `Char` is a Unicode
 code point (full 21-bit range), so we handle the full UTF-8 length table:
 
-  - `< 0x80`     → 1 byte
-  - `< 0x800`    → 2 bytes
-  - `< 0x10000`  → 3 bytes
-  - `≤ 0x10FFFF` → 4 bytes
+  - `< 0x80`     -> 1 byte
+  - `< 0x800`    -> 2 bytes
+  - `< 0x10000`  -> 3 bytes
+  - `<= 0x10FFFF` -> 4 bytes
 
 -}
 charToUtf8Bytes : Char -> List Int

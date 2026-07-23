@@ -20,7 +20,7 @@ module Web3.Subscription exposing
 The dominant pattern for reactive dapps. Where [`Web3.Contract.Event`](Web3-Contract-Event)
 fetches historical logs via `eth_getLogs`, this module opens a long-lived
 WebSocket subscription so every NEW log is pushed to your update fn the
-moment it lands on-chain — no polling, no missed blocks.
+moment it lands on-chain -- no polling, no missed blocks.
 
 
 # The subscription identifier
@@ -115,7 +115,7 @@ type LogFilter
 
 
 {-| Start a logs filter that matches every log in every block. Refine with
-[`atAddress`](#atAddress) and [`withTopic`](#withTopic) — usually you want
+[`atAddress`](#atAddress) and [`withTopic`](#withTopic) -- usually you want
 both, otherwise you'll receive every event from every contract on the chain.
 -}
 logs : LogFilter
@@ -131,7 +131,7 @@ atAddress addr (LogFilter f) =
 
 
 {-| Match a specific topic at a given position. Topic 0 is always the event
-signature hash; topics 1–3 are the event's indexed parameters in declaration
+signature hash; topics 1-3 are the event's indexed parameters in declaration
 order.
 
     -- match ERC-20 Transfer(address indexed from, address indexed to, uint256)
@@ -147,7 +147,7 @@ withTopic position topicHash (LogFilter f) =
 
 
 {-| Replace the entire topics list with a pre-built list of optional topic
-hashes. `Nothing` at a position means "match anything" — use the variadic
+hashes. `Nothing` at a position means "match anything" -- use the variadic
 [`withTopic`](#withTopic) for the common case.
 -}
 withTopics : List (Maybe String) -> LogFilter -> LogFilter
@@ -163,7 +163,7 @@ withTopics ts (LogFilter f) =
 
 `blockNumber` and `logIndex` are zero when unavailable (pending logs in
 some node implementations). `removed` is `True` if a chain reorg made
-this log no longer canonical — your update fn should usually treat a
+this log no longer canonical -- your update fn should usually treat a
 removed log as an "undo" of an earlier emission.
 
 -}
@@ -179,13 +179,13 @@ type alias LogEvent =
 
 
 {-| The high-level lifecycle of a subscription. Surfaced via
-[`statusDecoder`](#statusDecoder) so you can show "connecting…" /
-"reconnecting…" indicators.
+[`statusDecoder`](#statusDecoder) so you can show "connecting..." /
+"reconnecting..." indicators.
 
-  - `Opening` — handshake in progress, no events yet.
-  - `Open` — chain push is live.
-  - `Closed` — socket closed; the runtime will retry automatically.
-  - `Failed err` — the WS endpoint refused or the chain rejected the filter;
+  - `Opening` -- handshake in progress, no events yet.
+  - `Open` -- chain push is live.
+  - `Closed` -- socket closed; the runtime will retry automatically.
+  - `Failed err` -- the WS endpoint refused or the chain rejected the filter;
     the runtime will NOT retry without an explicit `close + open` cycle.
 
 -}
@@ -242,7 +242,7 @@ statusDecoder =
         (D.field "status" D.string |> D.map statusFromString)
 
 
-{-| Decode a `{ tag: "eventLog", id, … }` port message into a
+{-| Decode a `{ tag: "eventLog", id, ... }` port message into a
 `( SubscriptionId, LogEvent )` pair.
 -}
 eventDecoder : D.Decoder ( SubscriptionId, LogEvent )

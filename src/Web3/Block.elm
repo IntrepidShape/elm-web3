@@ -104,7 +104,7 @@ polling interval and/or the WebSocket `newHeads` subscription.
 
     web3Cmd (Block.unwatchBlockNumber "block-watch")
 
-This is a standalone encoder producing the port value directly — it is
+This is a standalone encoder producing the port value directly -- it is
 deliberately NOT a new variant of [`Cmd`](#Cmd), because adding a variant
 to an exposed custom type is a MAJOR change under Elm's enforced semver
 (consumer `case` expressions over `Cmd` would stop compiling). A

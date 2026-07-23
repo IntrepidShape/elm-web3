@@ -16,7 +16,7 @@ module Web3.Transaction exposing
 {-| Transaction lifecycle state machine.
 
 Every transaction goes through explicit states. Pattern matching forces you to
-handle every case — no "transaction failed silently" bugs. The state machine
+handle every case -- no "transaction failed silently" bugs. The state machine
 follows the TLA+ spec in `proofs/tla/TransactionSpec.tla`:
 terminal states never transition out (except via `TxReset`),
 and confirmation counts only increase.
@@ -149,8 +149,8 @@ Transitions are guarded to match the TLA+ GuardedNext specification:
 - TxSubmitted is only accepted from AwaitingSignature.
 - TxConfirmation is only accepted from Submitted or Confirming.
 - TxFailed is accepted from any non-terminal state.
-- TxRejected from AwaitingSignature → Rejected; from Submitted/Confirming → Failed.
-- TxReset from any terminal state → Idle; from non-terminal states → no-op.
+- TxRejected from AwaitingSignature -> Rejected; from Submitted/Confirming -> Failed.
+- TxReset from any terminal state -> Idle; from non-terminal states -> no-op.
 - TxReceiptNotFound is a no-op; the app can schedule another RequestReceipt.
 -}
 update : Msg -> Status -> Status

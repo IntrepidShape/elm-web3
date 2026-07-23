@@ -5,7 +5,7 @@ module Web3.Units exposing
     , parseUnits
     )
 
-{-| ETH / ERC-20 unit conversion — pure Elm, no JS required.
+{-| ETH / ERC-20 unit conversion -- pure Elm, no JS required.
 
     formatEther (BigInt.fromInt 1500000000000000000) == "1.5"
     parseEther "1.5" == Just <1500000000000000000>
@@ -23,7 +23,7 @@ decimal places. Trailing zeros are trimmed.
 
     formatEther zero         == "0"
     formatEther (10^18 wei)  == "1"
-    formatEther (1.5×10^18)  == "1.5"
+    formatEther (1.5x10^18)  == "1.5"
     formatEther (10^15 wei)  == "0.001"
 
 -}
@@ -36,7 +36,7 @@ formatEther =
 input, non-numeric strings, or negative values.
 
     parseEther "1"                       == Just <10^18>
-    parseEther "1.5"                     == Just <1.5×10^18>
+    parseEther "1.5"                     == Just <1.5x10^18>
     parseEther "0.000000000000000001"    == Just (BigInt.fromInt 1)
     parseEther "not-a-number"            == Nothing
     parseEther "-1"                      == Nothing
@@ -149,7 +149,7 @@ parseUnits decimals s =
 -- INTERNAL HELPERS
 
 
-{-| 10^n as a BigInt. Internal only — not public API.
+{-| 10^n as a BigInt. Internal only -- not public API.
 -}
 bigPow : Int -> BigInt
 bigPow n =

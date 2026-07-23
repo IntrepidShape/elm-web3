@@ -74,7 +74,7 @@ encode =
 
 {-| Decode a `watchEvent` log from the JS port.
 
-Requires the message to have `tag: "eventLog"` — use `logsDecoder` for
+Requires the message to have `tag: "eventLog"` -- use `logsDecoder` for
 the batch `getLogs` response which wraps logs in an array.
 
 -}
