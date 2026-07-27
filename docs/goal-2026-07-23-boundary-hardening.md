@@ -135,6 +135,11 @@ gives `-1` where Elm's `modBy` gives `2`. Rename or correct the sign.
 Split `Confirmed Receipt | RevertedOnChain Receipt`; update `isTerminal`,
 `Ui.Transaction.statusBadge`, and the module doc example at `Transaction.elm:34`
 which currently renders a revert as success.
+**Landing note:** this makes `examples/basic`'s `viewTxStatus` non-exhaustive,
+and it ripples into `elm-web3-ui`. Land it WITH the ui change and the example
+branch, not before. Track C's new build-every-example CI step means it cannot
+ship silently -- that is the intended safety net, not an obstacle to route
+around.
 
 **Gate A.** A new `tests/BoundaryRegressionTest.elm` containing, at minimum:
 an `int256` **hex** round-trip fuzz property (`Calldata.int256 >> Decode.int256`
@@ -250,14 +255,21 @@ say to also replace the shim, and doesn't say elm-web3-ui < 2.4.0 is incompatibl
 **C9. `examples/hello-read/`** — ~40 lines, one `eth_call`, one public RPC, no
 wallet. The time-to-first-successful-contract-read artefact. Built by CI.
 
-**Gate C.**
+**Gate C.** Each example is an *application* with its own manifest, and elm
+resolves `elm.json` from the cwd upward, never downward — so compiling an
+example from the repo root picks up the *package* manifest and dies with
+`PACKAGES CANNOT HAVE PORTS`. Every example must be built from its own
+directory. (An earlier revision of this gate had the root-relative form and
+could never have passed; corrected 2026-07-23.)
 ```
-elm make examples/basic/src/Main.elm --output=/dev/null                # exit 0
-elm make examples/hello-read/src/Main.elm --output=/dev/null           # exit 0
-cd ../elm-web3-ui/examples/gallery && elm make src/Main.elm --output=/dev/null   # exit 0
+(cd examples/basic      && elm make src/Main.elm --output=/dev/null)   # exit 0
+(cd examples/hello-read && elm make src/Main.elm --output=/dev/null)   # exit 0
+(cd ../elm-web3-ui/examples/gallery && elm make src/Main.elm --output=/dev/null)  # exit 0
 bun run scripts/check-readme-samples.ts                                # extracts fenced elm blocks, compiles each
 test -f SECURITY.md -a -f docs/UPGRADING.md                            # exit 0
 ```
+The CI step uses the same form, looping `examples/*/elm.json` and building
+each from its own directory.
 
 ---
 
