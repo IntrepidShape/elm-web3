@@ -375,8 +375,8 @@ Published by [Intrepid Development](https://intrepiddev.com.au).
 
 The Elm registry tracks per-namespace versions, so this package starts at
 1.0.0 under the `intrepidshape` namespace. The internal evolution from
-1.0.0 → 2.0.x continued under the earlier `bassradian` namespace and is
-preserved as historical CHANGELOG entries below for context. The 2.0.2
+1.0.0 → 2.0.x continued under an earlier namespace and is preserved as
+historical CHANGELOG entries below for context. The 2.0.2
 source content is what shipped here as 1.0.0.
 
 The earlier namespace is no longer maintained.
@@ -392,7 +392,7 @@ alongside the rest of [Intrepid Development](https://intrepiddev.com.au)'s
 open-source work. No source changes — `elm install intrepidshape/elm-web3`
 is a drop-in replacement for the prior namespace.
 
-The `bassradian/elm-web3` namespace is no longer maintained.
+The earlier namespace is no longer maintained.
 
 ---
 

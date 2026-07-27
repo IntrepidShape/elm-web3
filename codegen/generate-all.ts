@@ -5,8 +5,8 @@
  *   bun codegen/generate-all.ts [--out-dir <foundry-out>] [--elm-dir <elm-src>]
  *
  * Defaults:
- *   --out-dir  ../pulsechain/out
- *   --elm-dir  ../pulsechain/app-elm/src/Generated
+ *   --out-dir  ./out                 (Foundry artifact directory)
+ *   --elm-dir  ./src/Generated        (destination for generated Elm)
  */
 
 import { readdirSync, statSync, existsSync } from "fs";
@@ -21,8 +21,8 @@ function getArg(flag: string, defaultVal: string): string {
   return defaultVal;
 }
 
-const outDir = getArg("--out-dir", "../pulsechain/out");
-const elmDir = getArg("--elm-dir", "../pulsechain/app-elm/src/Generated");
+const outDir = getArg("--out-dir", "./out");
+const elmDir = getArg("--elm-dir", "./src/Generated");
 
 // Collect contract artifacts: each is out/<ContractName>.sol/<ContractName>.json
 const solDirs = readdirSync(outDir).filter((name) => {
