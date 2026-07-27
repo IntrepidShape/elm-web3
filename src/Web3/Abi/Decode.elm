@@ -12,6 +12,7 @@ module Web3.Abi.Decode exposing
     , uint128
     , hexSlot
     , uint256Slot
+    , int256Slot
     , addressSlot
     , boolSlot
     , stringSlot
@@ -27,7 +28,7 @@ received through ports from the JS Web3 layer.
 
 @docs address, uint256, int256, bool, string, bytes32
 @docs uint8, uint16, uint32, uint64, uint128
-@docs hexSlot, uint256Slot, addressSlot, boolSlot, stringSlot, listSlot
+@docs hexSlot, uint256Slot, int256Slot, addressSlot, boolSlot, stringSlot, listSlot
 @docs tuple2Hex, tuple3Hex
 @docs decodeRevertReason, decodeCustomError
 
@@ -171,10 +172,61 @@ uint128 =
 
 
 {-| Decode an int256 return value as a BigInt.
+
+Accepts a decimal string (already signed, as the JS bridge sends it) or a
+0x-prefixed 32-byte hex word, which is interpreted as **two's complement**.
+
+    -- 0xffff..ff is -1, not 2^256-1
+    decodeString int256 "\"0xffff...ffff\"" == Ok (BigInt.fromInt -1)
+
 -}
 int256 : D.Decoder BigInt
 int256 =
-    uint256
+    D.string
+        |> D.andThen
+            (\str ->
+                let
+                    parsed =
+                        if String.startsWith "0x" str || String.startsWith "0X" str then
+                            BigInt.fromHexString str |> Maybe.map fromTwosComplement
+
+                        else
+                            BigInt.fromString str
+                in
+                case parsed of
+                    Just b ->
+                        D.succeed b
+
+                    Nothing ->
+                        D.fail ("Invalid int256: " ++ str)
+            )
+
+
+{-| Two's-complement reinterpretation of an unsigned 256-bit word.
+
+Values at or above 2^255 represent negatives: subtract 2^256.
+-}
+fromTwosComplement : BigInt -> BigInt
+fromTwosComplement b =
+    if BigInt.gte b twoPow255 then
+        BigInt.sub b twoPow256
+
+    else
+        b
+
+
+twoPow255 : BigInt
+twoPow255 =
+    BigInt.fromString
+        "57896044618658097711785492504343953926634992332820282019728792003956564819968"
+        |> Maybe.withDefault BigInt.zero
+
+
+twoPow256 : BigInt
+twoPow256 =
+    BigInt.fromString
+        "115792089237316195423570985008687907853269984665640564039457584007913129639936"
+        |> Maybe.withDefault BigInt.zero
 
 
 {-| Decode a bool return value.
@@ -225,6 +277,19 @@ hexSlot n hex =
 uint256Slot : Int -> String -> Maybe BigInt
 uint256Slot n hex =
     BigInt.fromHexString ("0x" ++ hexSlot n hex)
+
+
+{-| Decode an int256 from slot `n` of a raw 0x-hex ABI response.
+
+The signed counterpart of [`uint256Slot`](#uint256Slot). Use this for any
+value Solidity declares as `int*` -- ticks, funding rates, PnL, rebase deltas.
+Reading those with `uint256Slot` yields a number near 2^256 instead of a small
+negative one.
+-}
+int256Slot : Int -> String -> Maybe BigInt
+int256Slot n hex =
+    BigInt.fromHexString ("0x" ++ hexSlot n hex)
+        |> Maybe.map fromTwosComplement
 
 
 {-| Decode an Address from slot `n` of a raw 0x-hex ABI response.

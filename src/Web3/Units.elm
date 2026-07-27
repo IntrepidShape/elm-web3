@@ -7,8 +7,15 @@ module Web3.Units exposing
 
 {-| ETH / ERC-20 unit conversion -- pure Elm, no JS required.
 
-    formatEther (BigInt.fromInt 1500000000000000000) == "1.5"
     parseEther "1.5" == Just <1500000000000000000>
+
+Build wei values with `BigInt.fromString`, never `BigInt.fromInt`. An Elm `Int`
+is a JS double, so a literal above 2^53 is already corrupt before it reaches
+this module: `BigInt.fromInt 1500000000000000000` yields 999996861446400000000.
+Every realistic 18-decimal amount is past that bound.
+
+Negative values format with a single leading sign, and `parseUnits` rejects a
+malformed fraction rather than returning a plausible wrong number.
 
 @docs formatEther, parseEther
 @docs formatUnits, parseUnits
@@ -61,14 +68,24 @@ formatUnits decimals wei =
 
     else
         let
+            negative =
+                BigInt.lt wei BigInt.zero
+
+            magnitude =
+                if negative then
+                    BigInt.sub BigInt.zero wei
+
+                else
+                    wei
+
             divisor =
                 bigPow decimals
 
             whole =
-                BigInt.div wei divisor |> Maybe.withDefault BigInt.zero
+                BigInt.div magnitude divisor |> Maybe.withDefault BigInt.zero
 
             rem =
-                BigInt.mod wei divisor |> Maybe.withDefault BigInt.zero
+                BigInt.mod magnitude divisor |> Maybe.withDefault BigInt.zero
 
             remStr =
                 BigInt.toString rem
@@ -76,12 +93,22 @@ formatUnits decimals wei =
 
             frac =
                 trimTrailingZeros remStr
+
+            body =
+                if String.isEmpty frac then
+                    BigInt.toString whole
+
+                else
+                    BigInt.toString whole ++ "." ++ frac
         in
-        if String.isEmpty frac then
-            BigInt.toString whole
+        -- The sign is applied once, to the finished string. Formatting the
+        -- signed value directly put the minus inside the fraction: a -1.5e15
+        -- wei balance rendered as "0.0-15".
+        if negative then
+            "-" ++ body
 
         else
-            BigInt.toString whole ++ "." ++ frac
+            body
 
 
 {-| Parse a human-readable token amount to its smallest unit, given the
@@ -115,6 +142,13 @@ parseUnits decimals s =
                         Nothing
 
             [ wholeStr, fracStr ] ->
+                if not (isDigits fracStr) then
+                    -- A sign or exponent inside the fraction used to reach
+                    -- BigInt.fromString, which accepts a leading '-'/'+':
+                    -- "1.-5" parsed as 0.95 with no error reported.
+                    Nothing
+
+                else
                 let
                     -- Truncate to at most `decimals` digits, pad right to exactly `decimals`
                     padded =
@@ -147,6 +181,14 @@ parseUnits decimals s =
 
 
 -- INTERNAL HELPERS
+
+
+{-| True when every character is an ASCII digit. An empty string is digits-only
+by convention ("1." is a well-formed whole number).
+-}
+isDigits : String -> Bool
+isDigits str =
+    String.all Char.isDigit str
 
 
 {-| 10^n as a BigInt. Internal only -- not public API.

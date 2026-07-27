@@ -284,6 +284,23 @@ isStatic s =
             False
 
 
+{-| Byte width a slot occupies in the HEAD section.
+
+A `Static` slot is not always one word: `tuple` of all-static components
+concatenates them into a single multi-word `Static`. Counting slots instead of
+bytes here understates the head and corrupts every subsequent dynamic offset --
+`foo((uint256,uint256),string)` emitted 0x40 where the correct offset is 0x60.
+-}
+headWidth : Slot -> Int
+headWidth s =
+    case s of
+        Static hex ->
+            String.length hex // 2
+
+        Dynamic _ ->
+            sLEN // 2
+
+
 
 -- CALLDATA ASSEMBLY ---------------------------------------------------------
 
@@ -316,7 +333,7 @@ layoutSlots : List Slot -> String
 layoutSlots slots =
     let
         headSize =
-            List.length slots * (sLEN // 2)
+            List.sum (List.map headWidth slots)
 
         ( heads, tails, _ ) =
             List.foldl
