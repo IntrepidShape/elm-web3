@@ -5,6 +5,7 @@ module Web3.Contract.Send exposing
     , payableCall
     , payableCallRaw
     , withGasLimit
+    , withFrom
     , encode
     , estimateGas
     , deployCall
@@ -35,7 +36,7 @@ Build a write call, encode it for the JS port, optionally estimate gas first.
             }
 
 @docs WriteCall
-@docs writeCall, writeCallRaw, payableCall, payableCallRaw, withGasLimit
+@docs writeCall, writeCallRaw, payableCall, payableCallRaw, withGasLimit, withFrom
 @docs encode, estimateGas, deployCall, encodeRawSend
 
 -}
@@ -55,6 +56,7 @@ type WriteCall
         , data : Maybe String
         , value : Maybe BigInt
         , gasLimit : Maybe Int
+        , from : Maybe T.Address
         }
 
 
@@ -74,6 +76,7 @@ writeCall opts =
         , data = Nothing
         , value = Nothing
         , gasLimit = Nothing
+        , from = Nothing
         }
 
 
@@ -106,6 +109,7 @@ writeCallRaw opts =
         , data = Just opts.data
         , value = Nothing
         , gasLimit = Nothing
+        , from = Nothing
         }
 
 
@@ -126,6 +130,7 @@ payableCall opts =
         , data = Nothing
         , value = Just opts.value
         , gasLimit = Nothing
+        , from = Nothing
         }
 
 
@@ -145,6 +150,7 @@ payableCallRaw opts =
         , data = Just opts.data
         , value = Just opts.value
         , gasLimit = Nothing
+        , from = Nothing
         }
 
 
@@ -155,11 +161,37 @@ withGasLimit gas (WriteCall call) =
     WriteCall { call | gasLimit = Just gas }
 
 
+{-| Set the sender explicitly.
+
+Without this the JS bridge estimates and sends from the wallet's first
+account. Set it when the connected account is not the account the call
+must run as -- an estimate taken from the wrong `msg.sender` is a
+different transaction, and for anything permissioned it either reverts
+or reports a gas figure the real send will not match.
+
+    approve spender amount
+        |> withFrom userAddress
+        |> estimateGas
+        |> web3Cmd
+
+-}
+withFrom : T.Address -> WriteCall -> WriteCall
+withFrom addr (WriteCall call) =
+    WriteCall { call | from = Just addr }
+
+
 {-| Encode a write call as an estimateGas command for the JS port.
 
     estimateGas myWriteCall
     -- sends { tag: "estimateGas", contract: ..., method: ..., args: ..., value: ... }
+    -- raw-calldata calls send { tag: "estimateGas", contract: ..., data: ... }
     -- JS responds with { tag: "gasEstimate", gas: "21000" }
+
+Emits exactly the same calldata, value and sender fields as
+[`encode`](#encode) does for the same call, so the returned figure
+applies to the transaction that is about to be signed. Prior to 2.1 this
+dropped `data` and `from`, which made every raw-calldata estimate an
+estimate of a different transaction.
 
 -}
 estimateGas : WriteCall -> E.Value
@@ -167,16 +199,10 @@ estimateGas (WriteCall call) =
     E.object
         ([ ( "tag", E.string "estimateGas" )
          , ( "contract", E.string (T.addressToString call.contract) )
-         , ( "method", E.string call.method )
-         , ( "args", E.list identity call.args )
          ]
-            ++ (case call.value of
-                    Just v ->
-                        [ ( "value", E.string (BigInt.toString v) ) ]
-
-                    Nothing ->
-                        []
-               )
+            ++ payloadFields call
+            ++ valueFields call
+            ++ fromFields call
         )
 
 
@@ -212,36 +238,64 @@ encodeRawSend rawHex =
 -}
 encode : WriteCall -> E.Value
 encode (WriteCall call) =
-    let
-        base =
-            [ ( "tag", E.string "send" )
-            , ( "contract", E.string (T.addressToString call.contract) )
+    E.object
+        ([ ( "tag", E.string "send" )
+         , ( "contract", E.string (T.addressToString call.contract) )
+         ]
+            ++ payloadFields call
+            ++ valueFields call
+            ++ gasFields call
+            ++ fromFields call
+        )
+
+
+
+-- INTERNAL
+
+
+{-| Calldata fields. Pre-built `data` wins over signature encoding: a raw
+call carries method "" and no args, so encoding it would produce the
+selector of the empty string.
+-}
+payloadFields :
+    { r | method : String, args : List E.Value, data : Maybe String }
+    -> List ( String, E.Value )
+payloadFields call =
+    case call.data of
+        Just hex ->
+            [ ( "data", E.string hex ) ]
+
+        Nothing ->
+            [ ( "method", E.string call.method )
+            , ( "args", E.list identity call.args )
             ]
 
-        payload =
-            case call.data of
-                Just hex ->
-                    [ ( "data", E.string hex ) ]
 
-                Nothing ->
-                    [ ( "method", E.string call.method )
-                    , ( "args", E.list identity call.args )
-                    ]
+valueFields : { r | value : Maybe BigInt } -> List ( String, E.Value )
+valueFields call =
+    case call.value of
+        Just v ->
+            [ ( "value", E.string (BigInt.toString v) ) ]
 
-        value =
-            case call.value of
-                Just v ->
-                    [ ( "value", E.string (BigInt.toString v) ) ]
+        Nothing ->
+            []
 
-                Nothing ->
-                    []
 
-        gas =
-            case call.gasLimit of
-                Just g ->
-                    [ ( "gasLimit", E.int g ) ]
+gasFields : { r | gasLimit : Maybe Int } -> List ( String, E.Value )
+gasFields call =
+    case call.gasLimit of
+        Just g ->
+            [ ( "gasLimit", E.int g ) ]
 
-                Nothing ->
-                    []
-    in
-    E.object (base ++ payload ++ value ++ gas)
+        Nothing ->
+            []
+
+
+fromFields : { r | from : Maybe T.Address } -> List ( String, E.Value )
+fromFields call =
+    case call.from of
+        Just addr ->
+            [ ( "from", E.string (T.addressToString addr) ) ]
+
+        Nothing ->
+            []

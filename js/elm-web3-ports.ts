@@ -92,9 +92,11 @@ export type Web3Cmd =
   | { readonly tag: "disconnect" }
   | { readonly tag: "switchChain";   readonly chainId: number }
   | { readonly tag: "selectWallet";  readonly rdns: string }
-  | { readonly tag: "call";          readonly id: string; readonly contract: string; readonly method: string; readonly args: readonly unknown[]; readonly block?: string }
-  | { readonly tag: "send";          readonly contract: string; readonly method: string; readonly args: readonly unknown[]; readonly value?: string; readonly gasLimit?: number; readonly skipSimulate?: boolean }
-  | { readonly tag: "estimateGas";   readonly contract: string; readonly method: string; readonly args: readonly unknown[]; readonly value?: string }
+  // `data` (pre-built calldata) wins over `method` + `args` on all three
+  // transaction-shaped cmds -- see `_calldataOf`.
+  | { readonly tag: "call";          readonly id: string; readonly contract: string; readonly method: string; readonly args: readonly unknown[]; readonly data?: string; readonly from?: string; readonly block?: string }
+  | { readonly tag: "send";          readonly contract: string; readonly method: string; readonly args: readonly unknown[]; readonly data?: string; readonly from?: string; readonly value?: string; readonly gasLimit?: number; readonly skipSimulate?: boolean }
+  | { readonly tag: "estimateGas";   readonly contract: string; readonly method: string; readonly args: readonly unknown[]; readonly data?: string; readonly from?: string; readonly value?: string }
   | { readonly tag: "multicall";     readonly id: string; readonly calls: readonly CallSpec[] }
   | { readonly tag: "watchEvent";    readonly id: string; readonly address: string; readonly topics?: ReadonlyArray<string | null> }
   | { readonly tag: "unwatchEvent";  readonly id: string }
@@ -576,7 +578,11 @@ export function setupPorts(app, options = {}) {
 
         // --- Contract reads (and simulated writes via from) ---
         case 'call': {
-          const callTx = { to: cmd.contract, data: encodeCall(cmd.method, cmd.args) }
+          // `_calldataOf` prefers pre-built `cmd.data` (Web3.Abi.Calldata via
+          // Contract.Call raw builders) over signature+args encoding. A raw
+          // call carries method '' and args [], so encoding it would produce
+          // the selector of the empty string and hit the wrong function.
+          const callTx = { to: cmd.contract, data: _calldataOf(cmd) }
           if (cmd.from) callTx.from = cmd.from
           const result = await _rpcRequest('eth_call', [callTx, cmd.block || 'latest'])
           app.ports.web3Sub.send({ tag: 'callResult', id: cmd.id, data: result })
@@ -588,9 +594,11 @@ export function setupPorts(app, options = {}) {
           if (!window.ethereum) throw new Error('No wallet found')
           const accounts = await window.ethereum.request({ method: 'eth_accounts' })
           const txParams = {
-            from: accounts[0],
+            // An explicit `cmd.from` simulates as that account; without it the
+            // estimate is meaningless for any contract that reads msg.sender.
+            from: cmd.from || accounts[0],
             to: cmd.contract,
-            data: encodeCall(cmd.method, cmd.args),
+            data: _calldataOf(cmd),
           }
           if (cmd.value) txParams.value = '0x' + BigInt(cmd.value).toString(16)
           const gasHex = await window.ethereum.request({
@@ -615,9 +623,9 @@ export function setupPorts(app, options = {}) {
           if (!window.ethereum) throw new Error('No wallet found')
           const accounts = await window.ethereum.request({ method: 'eth_accounts' })
           const txParams = {
-            from: accounts[0],
+            from: cmd.from || accounts[0],
             to: cmd.contract,
-            data: encodeCall(cmd.method, cmd.args),
+            data: _calldataOf(cmd),
           }
           if (cmd.value) txParams.value = '0x' + BigInt(cmd.value).toString(16)
           if (cmd.gasLimit) txParams.gas = '0x' + cmd.gasLimit.toString(16)
@@ -1622,6 +1630,72 @@ function _decodeAggregate3Result(hexData: string): readonly { readonly success: 
   return results
 }
 
+/** Hex bytes (no 0x) -> string. TextDecoder so multi-byte reasons survive. */
+function _hexToUtf8(hex: string): string {
+  const bytes = new Uint8Array(Math.floor(hex.length / 2))
+  for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
+  return new TextDecoder().decode(bytes)
+}
+
+/**
+ * Decode an EVM revert payload into the reason a human can act on.
+ *
+ * Handles the two standard shapes:
+ *   Error(string)   0x08c379a0 -- require/revert with a message
+ *   Panic(uint256)  0x4e487b71 -- Solidity's internal panics (0x11 overflow,
+ *                                 0x12 divide-by-zero, 0x32 out-of-bounds, ...)
+ *
+ * Returns null for missing, malformed, or custom-error payloads so the caller
+ * falls back to the wallet's own message -- the custom-error selector still
+ * reaches Elm as `revertData`, which is the only place it can be resolved
+ * against an ABI.
+ *
+ * This function was CALLED but never DEFINED before 2026-07-27, so every
+ * non-4001 failure threw a ReferenceError inside the catch block and no
+ * `failed` message ever reached Elm: a reverted transaction looked like a
+ * transaction that simply never resolved.
+ */
+function _decodeRevertReason(data: unknown): string | null {
+  if (typeof data !== 'string') return null
+  const hex = (data.startsWith('0x') || data.startsWith('0X') ? data.slice(2) : data).trim()
+  if (hex.length < 8 || !/^[0-9a-fA-F]+$/.test(hex)) return null
+
+  const selector = hex.slice(0, 8).toLowerCase()
+  const body = hex.slice(8)
+
+  if (selector === '08c379a0') {
+    // abi.encode(string): offset word, length word, then the utf8 bytes.
+    if (body.length < 128) return null
+    const len = parseInt(body.slice(64, 128), 16)
+    if (!Number.isSafeInteger(len) || len <= 0) return null
+    const chars = body.slice(128, 128 + len * 2)
+    if (chars.length < len * 2) return null
+    const decoded = _hexToUtf8(chars)
+    return decoded.length > 0 ? decoded : null
+  }
+
+  if (selector === '4e487b71') {
+    if (body.length < 64) return null
+    const code = parseInt(body.slice(0, 64), 16)
+    if (!Number.isSafeInteger(code)) return null
+    const known: Record<number, string> = {
+      0x01: 'assertion failed',
+      0x11: 'arithmetic overflow or underflow',
+      0x12: 'division or modulo by zero',
+      0x21: 'invalid enum value',
+      0x22: 'invalid storage byte array encoding',
+      0x31: 'pop on an empty array',
+      0x32: 'array index out of bounds',
+      0x41: 'out of memory',
+      0x51: 'call to an uninitialised internal function',
+    }
+    const label = known[code]
+    return label ? `Panic 0x${code.toString(16)}: ${label}` : `Panic 0x${code.toString(16)}`
+  }
+
+  return null
+}
+
 // Split a comma-separated type string respecting nested parentheses.
 // e.g. "(address,bool,bytes)[],uint256" -> ["(address,bool,bytes)[]", "uint256"]
 function splitTopLevelTypes(typesStr: string): string[] {
@@ -1651,6 +1725,26 @@ function encodeCall(method: string, args: readonly unknown[]): string {
   if (types.length === 0) return '0x' + sel
 
   return '0x' + sel + _abiEncode(types, args)
+}
+
+/**
+ * Resolve the calldata for a call/estimateGas/send cmd.
+ *
+ * Elm's raw builders (`Contract.Call.readCallRaw`, `Contract.Send.writeCallRaw`,
+ * `payableCallRaw`) ship pre-built hex from `Web3.Abi.Calldata` in `cmd.data`
+ * and set `method` to '' with no args. That MUST win over signature encoding:
+ * `encodeCall('', [])` is the selector of the empty string, i.e. a call to a
+ * function nobody has, which most contracts answer with the fallback or a
+ * revert. Only fall back to signature+args when no `data` was supplied.
+ */
+function _calldataOf(cmd: { readonly data?: unknown; readonly method?: unknown; readonly args?: unknown }): string {
+  const raw = cmd.data
+  if (typeof raw === 'string' && raw.length > 0) {
+    return raw.startsWith('0x') ? raw : '0x' + raw
+  }
+  const method = typeof cmd.method === 'string' ? cmd.method : ''
+  const args = Array.isArray(cmd.args) ? (cmd.args as readonly unknown[]) : []
+  return encodeCall(method, args)
 }
 
 async function pollReceipt(hash: string, app: ElmApp, rpc: (method: string, params: readonly unknown[]) => Promise<unknown>): Promise<void> {

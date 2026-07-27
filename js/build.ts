@@ -10,9 +10,17 @@
 //   elm-web3-ports.js  — minified ESM bundle for the browser
 //
 // The .d.ts file is co-published so JS consumers still get type info
-// when their tooling supports declaration files. It's hand-maintained
-// in lockstep with the .ts source; a future revision can switch to
-// `tsc --declaration` once the TS is strict enough.
+// when their tooling supports declaration files. It stays hand-written,
+// deliberately: `tsc --declaration` can only emit what the implementation
+// asserts about itself, and there the sub channel is one open record
+// (`Web3Sub = { tag: string; [k: string]: unknown }`), so generating would
+// replace 40 typed reply payloads with `unknown` -- a worse contract than
+// the drifted one it replaced. Drift is handled by detection instead:
+// `scripts/check-port-parity.ts` fails CI when the .d.ts tag sets and the
+// implementation disagree.
+//
+// Freshness of THIS artifact is enforced the same way: CI runs this script
+// and then `git diff --exit-code js/elm-web3-ports.js`.
 
 const dir = import.meta.dir;
 

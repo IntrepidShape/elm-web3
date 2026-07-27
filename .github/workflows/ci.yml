@@ -33,6 +33,21 @@ jobs:
       - name: Typecheck library
         run: elm make src/Web3.elm --output=/dev/null
 
+      # Every example is an Elm *application* with its own elm.json, so each
+      # one has to be compiled from its own directory (the repo root holds the
+      # package manifest, which cannot contain ports). This loop is the check
+      # that stops examples/ silently rotting against the library again --
+      # examples/basic had been broken since the 2.0.0 wallet rewrite because
+      # nothing in CI ever compiled it.
+      - name: Build every example
+        run: |
+          set -e
+          for manifest in examples/*/elm.json; do
+            dir=$(dirname "$manifest")
+            echo "--- building $dir"
+            (cd "$dir" && elm make src/Main.elm --output=/dev/null)
+          done
+
       - name: Verify docs build
         run: elm make --docs=/tmp/docs.json
 
@@ -51,6 +66,47 @@ jobs:
 
       - name: Run test suite
         run: npx --yes elm-test@0.19.1-revision12 --compiler /usr/local/bin/elm
+
+  js:
+    name: JS shim (artifact freshness + port parity)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # The committed artifact IS what adopters load -- from a CDN, a vendored
+      # copy, or the README's script tag. It went through the entire 2.0.0
+      # wallet rewrite without being rebuilt, so every adopter had a shim that
+      # could not emit connectRejected / connectPending / connectFailed and a
+      # wallet FSM that could never leave Connecting. A stale artifact is now
+      # impossible to commit: rebuild it, then demand a clean diff.
+      - name: Rebuild the shim from its TypeScript source
+        run: bun js/build.ts
+
+      - name: Committed artifact must match its source
+        run: git diff --exit-code js/elm-web3-ports.js
+
+      # The port-parity detector. Proving it CAN fail is the hard gate here;
+      # a checker nobody has watched reject anything is not evidence.
+      - name: Parity checker must detect injected drift
+        run: bun run scripts/check-port-parity.ts --self-test
+
+      # The strict run is tolerated for now because it reports three REAL
+      # defects that live in Elm modules, tracked in
+      # docs/goal-2026-07-23-boundary-hardening.md:
+      #   CMD-3 watchEvent  Subscription.open and Contract.Event.watchEvent
+      #                     emit the same tag with incompatible payloads, so
+      #                     the WS path subscribes to every log on chain
+      #   SUB-1 callResult  no Elm module names the tag eth_call replies with
+      #   SUB-1 unknownCmd  no Elm decoder matches the shim's fallback
+      # Delete `continue-on-error` the moment those are reconciled -- it is
+      # the only thing between this repo and a hard boundary gate.
+      - name: Port tag parity (Elm <-> JS, both directions)
+        continue-on-error: true
+        run: bun run scripts/check-port-parity.ts --verbose
 
   tlc:
     name: Model-check TLA+ specs (TLC)
@@ -92,3 +148,35 @@ jobs:
             else echo "FAIL $f"; cat /tmp/out; fail=1; fi
           done
           exit $fail
+
+  spec-lockstep:
+    name: State machines change in lockstep with their specs
+    runs-on: ubuntu-latest
+    steps:
+      # Full history: the guard resolves a merge base and reads both
+      # revisions of each state-machine module.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # CONTRIBUTING.md rule 2, enforced. Wallet.elm gained RequestId-tracked
+      # connect state on 2026-07-07 (837991a, 1657054) and WalletSpec.tla was
+      # not touched, so 2.0.0 published a model check of a machine that no
+      # longer existed. This is the check that would have caught it that day.
+      - name: Prove the guard still fires (historical drift must exit 1)
+        run: |
+          if bun run scripts/check-spec-lockstep.ts --range 837991a~1..837991a; then
+            echo "guard did NOT fire on known drift -- it cannot be trusted"
+            exit 1
+          fi
+          bun run scripts/check-spec-lockstep.ts --self-test
+
+      - name: Check this change
+        env:
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+          LOCKSTEP_RANGE: ${{ (github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000') && format('{0}..{1}', github.event.before, github.sha) || '' }}
+        run: bun run scripts/check-spec-lockstep.ts

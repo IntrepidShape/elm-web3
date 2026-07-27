@@ -14,10 +14,16 @@
  *   - Type-checked branded values: an `Address` can't accidentally be passed
  *     to a function expecting a `TxHash`
  *
- * The runtime source-of-truth remains `elm-web3-ports.js`. A future v2.x will
- * rewrite the JS as TS source with these types inline; until then this `.d.ts`
- * is the type-level contract and any drift between it and the JS must be
- * caught in code review.
+ * The runtime source-of-truth is `elm-web3-ports.ts` (`elm-web3-ports.js` is
+ * its bundled artifact). This file is the type-level contract, and it is NOT
+ * generated: `tsc --declaration` can only emit what the implementation's own
+ * types say, and there the sub channel is a single open record
+ * (`{ tag: string; [k: string]: unknown }`) -- generating would delete every
+ * payload documented below. Instead the tag sets are machine-checked against
+ * the implementation on every CI run by
+ * `scripts/check-port-parity.ts` (codes DTS-CMD-* / DTS-SUB-*), so a renamed
+ * or added tag fails the build rather than waiting for a code review. Field
+ * names within a tag are still hand-maintained.
  *
  * Distributed alongside `elm-web3-ports.js` so consumers importing the module
  * via `import { setupPorts } from './elm-web3-ports.js'` get types for free.
@@ -67,81 +73,116 @@ export interface ElmApp {
 // Cmd surface (Elm → JS)
 // ─────────────────────────────────────────────────────────────────────
 
+/** Pre-built ABI calldata. When present it is sent verbatim and `method` /
+ *  `args` are ignored -- the Elm raw builders (`Contract.Call.readCallRaw`,
+ *  `Contract.Send.writeCallRaw`, `payableCallRaw`) always take this path. */
+type Calldata = { readonly data: Hex; readonly method?: string; readonly args?: readonly unknown[] }
+/** Signature + arguments, encoded by the shim's own ABI encoder. */
+type Signature = { readonly data?: undefined; readonly method: string; readonly args: readonly unknown[] }
+type CallPayload = Calldata | Signature
+
 /** Every command the Elm side can emit. Discriminated by `tag`. */
 export type Web3Cmd =
   // Wallet lifecycle
-  | { readonly tag: 'connect' }
+  | { readonly tag: 'connect'; readonly requestId: number }
   | { readonly tag: 'disconnect' }
   | { readonly tag: 'switchChain'; readonly chainId: number }
-  | { readonly tag: 'selectWallet'; readonly rdns: string }
+  | { readonly tag: 'selectWallet'; readonly rdns: string; readonly requestId: number }
   | { readonly tag: 'addChain'; readonly chainId: number; readonly chainName: string; readonly rpcUrls: readonly string[]; readonly blockExplorerUrls: readonly string[]; readonly nativeCurrency: { readonly name: string; readonly symbol: string; readonly decimals: number } }
-  | { readonly tag: 'watchAsset'; readonly type: 'ERC20'; readonly address: Address; readonly symbol: string; readonly decimals: number; readonly image?: string }
-  | { readonly tag: 'requestPermissions'; readonly id: string; readonly permissions: Record<string, Record<string, unknown>> }
-  | { readonly tag: 'getPermissions'; readonly id: string }
+  | { readonly tag: 'watchAsset'; readonly address: Address; readonly symbol: string; readonly decimals: number; readonly image: string }
+  | { readonly tag: 'requestPermissions' }
+  | { readonly tag: 'getPermissions' }
 
   // Reads
-  | { readonly tag: 'call'; readonly id: string; readonly contract: Address; readonly method: string; readonly args: readonly unknown[]; readonly block?: BlockTag }
+  | ({ readonly tag: 'call'; readonly id: string; readonly contract: Address; readonly from?: Address; readonly block: BlockTag } & CallPayload)
   | { readonly tag: 'multicall'; readonly id: string; readonly calls: ReadonlyArray<{ readonly contract: Address; readonly method: string; readonly args: readonly unknown[] }> }
   | { readonly tag: 'getBalance'; readonly id: string; readonly address: Address; readonly block?: BlockTag }
-  | { readonly tag: 'getStorageAt'; readonly id: string; readonly address: Address; readonly slot: Bytes32; readonly block?: BlockTag }
-  | { readonly tag: 'getCode'; readonly id: string; readonly address: Address; readonly block?: BlockTag }
+  | { readonly tag: 'getStorageAt'; readonly id: string; readonly contract: Address; readonly slot: Bytes32; readonly block?: BlockTag }
+  | { readonly tag: 'getCode'; readonly id: string; readonly contract: Address; readonly block?: BlockTag }
   | { readonly tag: 'getTransactionCount'; readonly id: string; readonly address: Address; readonly block?: BlockTag }
   | { readonly tag: 'getGasPrice'; readonly id: string }
-  | { readonly tag: 'getFeeHistory'; readonly id: string; readonly blockCount: number; readonly newestBlock: BlockTag; readonly rewardPercentiles?: readonly number[] }
+  | { readonly tag: 'getMaxPriorityFee'; readonly id: string }
+  // `newestBlock` is pinned to 'latest' and reward percentiles to [] by the
+  // shim; only `blockCount` crosses the boundary.
+  | { readonly tag: 'getFeeHistory'; readonly id: string; readonly blockCount: number }
   | { readonly tag: 'getBlockNumber'; readonly id: string }
-  | { readonly tag: 'getBlock'; readonly id: string; readonly block: BlockTag; readonly fullTransactions?: boolean }
+  | { readonly tag: 'getBlock'; readonly id: string; readonly block: BlockTag }
   | { readonly tag: 'getBlockTransactionCount'; readonly id: string; readonly block: BlockTag }
   | { readonly tag: 'getTransaction'; readonly id: string; readonly hash: TxHash }
   | { readonly tag: 'getTransactionReceipt'; readonly id: string; readonly hash: TxHash }
-  | { readonly tag: 'getLogs'; readonly id?: string; readonly contract: Address; readonly fromBlock: BlockTag; readonly toBlock: BlockTag; readonly topics?: ReadonlyArray<Hex | null | readonly Hex[]> }
+  | { readonly tag: 'getLogs'; readonly contract: Address; readonly fromBlock: BlockTag; readonly toBlock: BlockTag; readonly topics?: ReadonlyArray<Hex | null> }
 
   // Writes
-  | { readonly tag: 'estimateGas'; readonly contract: Address; readonly method: string; readonly args: readonly unknown[]; readonly value?: string }
-  | { readonly tag: 'send'; readonly contract: Address; readonly method: string; readonly args: readonly unknown[]; readonly value?: string; readonly gasLimit?: number }
-  | { readonly tag: 'sendRawTransaction'; readonly id: string; readonly raw: Hex }
-  | { readonly tag: 'deploy'; readonly bytecode: Hex; readonly args?: readonly unknown[]; readonly value?: string; readonly gasLimit?: number }
+  | ({ readonly tag: 'estimateGas'; readonly contract: Address; readonly from?: Address; readonly value?: string } & CallPayload)
+  | ({ readonly tag: 'send'; readonly contract: Address; readonly from?: Address; readonly value?: string; readonly gasLimit?: number; readonly skipSimulate?: boolean } & CallPayload)
+  | { readonly tag: 'sendRawTransaction'; readonly rawTx: Hex }
+  | { readonly tag: 'deploy'; readonly bytecode: Hex; readonly args?: readonly string[]; readonly value?: string; readonly gasLimit?: number }
 
   // Signing
   | { readonly tag: 'personalSign'; readonly id: string; readonly from: Address; readonly message: string }
   | { readonly tag: 'signTypedData'; readonly id: string; readonly from: Address; readonly data: unknown }
+  | { readonly tag: 'ecRecover'; readonly id: string; readonly message: string; readonly signature: Hex }
 
   // Misc
-  | { readonly tag: 'keccak256'; readonly id: string; readonly input: string }
+  | { readonly tag: 'keccak256'; readonly id: string; readonly message: string }
   // Event subscriptions. Prefer WS (eth_subscribe) when wsUrls/rpcUrls are
   // configured; fall back to a 4s eth_getLogs poll if every WS endpoint
   // fails to handshake. Replies via `eventLog` + `subscribed` Subs.
-  | { readonly tag: 'watchEvent'; readonly id: string; readonly address: Address; readonly topics?: ReadonlyArray<Hex | null> }
+  //
+  // NOTE: `Web3.Contract.Event.watchEvent` emits this same tag with a
+  // DIFFERENT payload (`{ contract, event, topics }` -- no `id`, and the
+  // address under a different key). The shim reads the shape below; the
+  // other shape subscribes with `address: undefined`, i.e. every log on
+  // chain. Use `Web3.Subscription.open` until that is reconciled.
+  | { readonly tag: 'watchEvent'; readonly id: string; readonly address: Address | null; readonly topics?: ReadonlyArray<Hex | null> }
   | { readonly tag: 'unwatchEvent'; readonly id: string }
-  | { readonly tag: 'watchBlockNumber' }
+  | { readonly tag: 'watchBlockNumber'; readonly id: string }
+  | { readonly tag: 'unwatchBlockNumber'; readonly id: string }
 
 // ─────────────────────────────────────────────────────────────────────
 // Sub surface (JS → Elm)
 // ─────────────────────────────────────────────────────────────────────
 
-export interface ReceiptJson {
-  readonly hash: TxHash
+/** A log as it appears inside a receipt (`confirmed` / `receiptResult`). */
+export interface ReceiptLogJson {
+  readonly address: Address
+  readonly topics: readonly Hex[]
+  readonly data: Hex
   readonly blockNumber: number
-  readonly gasUsed: string
-  readonly status: boolean
-  readonly logs: ReadonlyArray<EventLogJson>
+  readonly logIndex: number
 }
 
+/** A log delivered by a live subscription (`eventLog`). */
 export interface EventLogJson {
   readonly address: Address
   readonly topics: readonly Hex[]
   readonly data: Hex
   readonly blockNumber: number
   readonly logIndex: number
-  /** Present on WS-subscribed events; `false` on canonical logs, `true`
-   *  when a chain reorg invalidates a previously-emitted log. Polling
-   *  fallback always emits `false`. */
-  readonly removed?: boolean
+  /** `false` on canonical logs, `true` when a chain reorg invalidates a
+   *  previously-emitted log. The polling fallback always emits `false`. */
+  readonly removed: boolean
   /** Transaction hash that produced this log. */
-  readonly transactionHash?: TxHash
+  readonly transactionHash: TxHash
+}
+
+/** A log from a batch `getLogs` query. Note `contract` / `txHash`: this
+ *  shape differs from `EventLogJson` on purpose -- it mirrors the field
+ *  names `Web3.Contract.Event.logDecoder` expects. */
+export interface QueriedLogJson {
+  readonly contract: Address
+  readonly data: Hex
+  readonly topics: readonly Hex[]
+  readonly blockNumber: number
+  readonly txHash: TxHash
+  readonly logIndex: number
 }
 
 /** Status transitions surfaced by a long-lived eth_subscribe stream. */
 export type SubscriptionStatus = 'open' | 'closed' | 'failed'
+
+/** Why a connect attempt failed, before any error string. */
+export type ConnectFailureReason = 'not_found' | 'no_accounts' | 'network'
 
 export interface WalletProviderInfo {
   readonly name: string
@@ -149,65 +190,67 @@ export interface WalletProviderInfo {
   readonly rdns: string
 }
 
-/** Every message the JS port can send back. Discriminated by `tag`. */
+/** Every message the JS port can send back. Discriminated by `tag`.
+ *
+ *  `requestId` echoes the id of the connect attempt that caused the reply,
+ *  so a stale wallet prompt resolving after a newer one can be discarded
+ *  (`Web3.Wallet`'s supersession FSM depends on it). */
 export type Web3Sub =
   // Wallet lifecycle
-  | { readonly tag: 'connected'; readonly address: Address; readonly chainId: number }
+  | { readonly tag: 'connected'; readonly requestId: number; readonly address: Address; readonly chainId: number }
+  | { readonly tag: 'connectRejected'; readonly requestId: number }
+  | { readonly tag: 'connectPending'; readonly requestId: number }
+  | { readonly tag: 'connectFailed'; readonly requestId: number; readonly reason: ConnectFailureReason; readonly error: string }
   | { readonly tag: 'disconnected' }
   | { readonly tag: 'accountChanged'; readonly address: Address }
   | { readonly tag: 'chainChanged'; readonly chainId: number }
   | { readonly tag: 'walletsDiscovered'; readonly wallets: readonly WalletProviderInfo[] }
   | { readonly tag: 'readOnly' }
-  | { readonly tag: 'switchChainOk' }
+  | { readonly tag: 'switchChainOk'; readonly chainId: number }
   | { readonly tag: 'chainAdded' }
+  | { readonly tag: 'assetWatched' }
+  | { readonly tag: 'permissions'; readonly permissions: readonly string[] }
   | { readonly tag: 'rejected' }
-  | { readonly tag: 'error'; readonly message: string }
 
   // Tx lifecycle
   | { readonly tag: 'submitted'; readonly hash: TxHash }
   | { readonly tag: 'confirmation'; readonly hash: TxHash; readonly count: number }
-  | { readonly tag: 'confirmed'; readonly hash: TxHash; readonly blockNumber: number; readonly gasUsed: string; readonly status: boolean; readonly logs: readonly EventLogJson[] }
-  | { readonly tag: 'failed'; readonly error: string; readonly revertData?: Hex }
-  | { readonly tag: 'receiptResult'; readonly hash: TxHash; readonly blockNumber: number; readonly gasUsed: string; readonly status: boolean; readonly logs: readonly EventLogJson[] }
+  | { readonly tag: 'confirmed'; readonly hash: TxHash; readonly blockNumber: number; readonly gasUsed: string; readonly status: boolean; readonly logs: readonly ReceiptLogJson[] }
+  /** `status: false` means mined-and-reverted, not "not yet mined". */
+  | { readonly tag: 'receiptResult'; readonly id: string; readonly hash: TxHash; readonly blockNumber: number; readonly gasUsed: string; readonly status: boolean; readonly logs: readonly ReceiptLogJson[] }
   | { readonly tag: 'receiptNotFound'; readonly id: string }
+  | { readonly tag: 'failed'; readonly error: string; readonly revertData?: Hex }
+  | { readonly tag: 'gasEstimate'; readonly gas: string }
 
-  // Reads
-  | { readonly tag: 'callResult'; readonly id: string; readonly contract: Address; readonly data: Hex }
+  // Reads. Every wei-denominated field crosses as a decimal STRING: JSON
+  // numbers are doubles and uint256 does not fit in one.
+  | { readonly tag: 'callResult'; readonly id: string; readonly data: Hex }
   | { readonly tag: 'multicallResult'; readonly id: string; readonly results: ReadonlyArray<{ readonly success: boolean; readonly data: Hex }> }
-  | { readonly tag: 'balance'; readonly id: string; readonly value: Hex }
-  | { readonly tag: 'storage'; readonly id: string; readonly value: Hex }
-  | { readonly tag: 'code'; readonly id: string; readonly value: Hex }
-  | { readonly tag: 'txCount'; readonly id: string; readonly value: number }
-  | { readonly tag: 'gasPrice'; readonly id: string; readonly value: Hex }
-  | { readonly tag: 'feeHistory'; readonly id: string; readonly oldestBlock: Hex; readonly baseFeePerGas: readonly Hex[]; readonly gasUsedRatio: readonly number[]; readonly reward?: ReadonlyArray<readonly Hex[]> }
-  | { readonly tag: 'blockNumber'; readonly id?: string; readonly value: number }
-  | { readonly tag: 'block'; readonly id: string; readonly block: unknown }
-  | { readonly tag: 'blockTxCount'; readonly id: string; readonly value: number }
-  | { readonly tag: 'transaction'; readonly id: string; readonly tx: unknown }
-  | { readonly tag: 'logs'; readonly id?: string; readonly logs: readonly EventLogJson[] }
-  | { readonly tag: 'keccak'; readonly id: string; readonly value: Hex }
+  | { readonly tag: 'balance'; readonly id: string; readonly wei: string }
+  | { readonly tag: 'storageAt'; readonly id: string; readonly data: Hex }
+  | { readonly tag: 'code'; readonly id: string; readonly data: Hex }
+  | { readonly tag: 'txCount'; readonly id: string; readonly count: number }
+  | { readonly tag: 'gasPrice'; readonly id: string; readonly wei: string }
+  | { readonly tag: 'maxPriorityFee'; readonly id: string; readonly wei: string }
+  | { readonly tag: 'feeHistory'; readonly id: string; readonly oldestBlock: number; readonly baseFeePerGas: readonly string[]; readonly gasUsedRatio: readonly number[] }
+  | { readonly tag: 'blockNumber'; readonly id: string; readonly number: number }
+  | { readonly tag: 'block'; readonly id: string; readonly number: number; readonly hash: Hex; readonly timestamp: number; readonly gasLimit: string; readonly gasUsed: string; readonly baseFeePerGas: string | null; readonly parentHash: Hex }
+  | { readonly tag: 'blockTxCount'; readonly id: string; readonly count: number }
+  | { readonly tag: 'transaction'; readonly id: string; readonly hash: TxHash; readonly from: Address; readonly to: Address | null; readonly value: string; readonly nonce: number; readonly data: Hex; readonly gas: number; readonly blockNumber: number | null; readonly blockHash: Hex | null }
+  | { readonly tag: 'transactionNotFound'; readonly id: string }
+  | { readonly tag: 'logs'; readonly logs: readonly QueriedLogJson[] }
+  | { readonly tag: 'keccak256Result'; readonly id: string; readonly hash: Hex }
 
   // Live subscriptions (WS preferred, polling fallback)
-  | { readonly tag: 'eventLog';
-      readonly id: string;
-      readonly address: Address;
-      readonly topics: readonly Hex[];
-      readonly data: Hex;
-      readonly blockNumber: number;
-      readonly logIndex: number;
-      readonly transactionHash: TxHash;
-      readonly removed: boolean }
+  | ({ readonly tag: 'eventLog'; readonly id: string } & EventLogJson)
   | { readonly tag: 'subscribed'; readonly id: string; readonly status: SubscriptionStatus }
 
-  // Pre-decoded reads (port helpers)
-  | { readonly tag: 'tokenMeta'; readonly id: string; readonly value: string }
-
   // Signing
-  | { readonly tag: 'gasEstimate'; readonly gas: string }
   | { readonly tag: 'signed'; readonly id: string; readonly signature: Hex }
-  | { readonly tag: 'permissions'; readonly id: string; readonly permissions: readonly unknown[] }
+  | { readonly tag: 'recovered'; readonly id: string; readonly address: Address }
 
-  // Catch-all for forward-compat
+  // Catch-all: a cmd tag the shim has no handler for. No Elm decoder
+  // currently matches this, so it is dropped by the port sub.
   | { readonly tag: 'unknownCmd'; readonly cmd: string }
 
 // ─────────────────────────────────────────────────────────────────────
