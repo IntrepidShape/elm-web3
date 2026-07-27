@@ -2,10 +2,13 @@
 
 Honest answer to "have we exhaustively modeled the EVM API?": **no — and most
 of the gaps are deliberate.** This document is the map: every EIP / JSON-RPC
-method / provider event, its status in elm-web3 v1.2.x, and the reasoning.
-Audited 2026-07-02 against `src/` (24 modules), `js/elm-web3-ports.ts`
-(31 command handlers), and the Elm↔port wire tags (31 outbound / 30 inbound —
-verified 1:1 against the port's switch).
+method / provider event, its status in elm-web3, and the reasoning.
+
+Surface audited 2026-07-02 against `src/` and `js/elm-web3-ports.ts`;
+**re-checked 2026-07-27 against 2.0.0** (`src/`: 21 modules, all exposed;
+`js/elm-web3-ports.ts`: 35 command handlers plus a `default` arm). The wire-tag
+counts that used to be quoted here by hand are gone — see
+[§6](#6-wire-protocol-integrity), which now defers to a checker instead.
 
 Legend: ✅ covered · 🟡 partial/via-port-only · ❌ not covered (with verdict:
 **gap** = worth adding, **skip** = deliberately out of scope).
@@ -76,7 +79,7 @@ Legend: ✅ covered · 🟡 partial/via-port-only · ❌ not covered (with verdi
 |---|---|---|
 | `eth_subscribe("logs")` | ✅ | `Subscription` (WS, shared socket, re-arm on reconnect; falls back to 4s `eth_getLogs` poll) |
 | `eth_subscribe("newHeads")` | ✅ | `watchBlockNumber` upgraded (1.4.1): WS newHeads push with automatic 4s-poll fallback; identical message shape, zero Elm changes |
-| `eth_subscribe("newPendingTransactions")` | ❌ | **skip** — mempool streaming is bot territory (swapnsync-class), not dapp UI |
+| `eth_subscribe("newPendingTransactions")` | ❌ | **skip** — mempool streaming is trading-bot territory, not dapp UI |
 | Polling filters (`eth_newFilter`/`getFilterChanges`/`uninstallFilter`) | ❌ | **skip** — superseded by getLogs + WS logs sub |
 
 ## 5. Non-RPC building blocks
@@ -94,17 +97,79 @@ Legend: ✅ covered · 🟡 partial/via-port-only · ❌ not covered (with verdi
 
 ## 6. Wire-protocol integrity
 
-- All **31** Elm outbound command tags have exactly one handler in the port
-  switch — verified 1:1, no orphans on either side.
-- Port inbound tags without a library-level decoder (`callResult`,
-  `gasEstimate`, `logs`, `subscribed`, `unknownCmd`) are *documented
-  app-dispatch* tags — the app matches on `tag` and applies the module's
-  decoder. Not a gap, but the reason there is no single total inbound decoder.
-- Port-layer behaviors (exception containment, error-tag consistency) are
-  covered by `JS_PORT_PROOF.md`, including its open findings (F1–F7).
-  F8 (`watchBlockNumber` interval leak) was fixed in 1.3.0: pollers are
-  keyed by id, replaced on re-issue, and `Block.unwatchBlockNumber` clears
-  them. The F1–F7 re-audit against the current port remains open.
+### What "verified 1:1" meant, and what it did not
+
+This section used to assert that the Elm↔port contract was "verified 1:1, no
+orphans on either side". **That claim was about tag names only.** What was
+actually checked, once, by hand, in July 2026: for every `E.string "<tag>"` in
+`src/`, a `case '<tag>'` existed in the port switch, and vice versa.
+
+What it never checked, and was never qualified as not checking:
+
+- **Field names.** `{ tag: 'x', rawTx }` on one side and `cmd.raw` on the
+  other are 1:1 by tag and broken in practice. The hand-maintained
+  `js/elm-web3-ports.d.ts` had drifted from the runtime shape in several
+  places (its own header conceded that drift "must be caught in code review";
+  it wasn't). Those are tracked and being fixed in the Elm↔JS boundary work —
+  read their current status from the checker below, not from this paragraph.
+- **Field types and optionality.** A `Maybe` on the Elm side vs a required
+  property on the TS side is invisible to a tag comparison.
+- **Tag collisions.** Two Elm modules can emit the *same* tag with
+  incompatible payloads and still satisfy a set-difference check. One does:
+  `Subscription.open` and `Contract.Event.watchEvent` both emit `watchEvent`.
+- **Whether it stays true.** A one-off manual comparison decays the moment
+  either side changes, which is exactly how it decayed.
+
+### What checks it now
+
+`scripts/check-port-parity.ts` — a CI script that reads both sides
+mechanically. It has a `--self-test` mode that injects a drift per failure
+class and must be seen to reject each one, because a checker nobody has
+watched fail is not evidence.
+
+Be precise about how far it reaches, because this section's whole problem was
+imprecision. **Gating** (a difference fails CI):
+
+- `CMD-1` / `CMD-2` — every Elm command tag has a shim handler and vice versa.
+- `CMD-3` — no command tag is emitted from two Elm sites with **different
+  payload field sets**. This is field-level, and it is what catches the
+  `watchEvent` collision.
+- `SUB-1` / `SUB-2` — every tag the shim sends is decoded or documented by
+  some Elm module, and every tag an Elm decoder matches is actually sent.
+- `DTS` — `js/elm-web3-ports.d.ts` lists exactly the tags the shim handles and
+  emits.
+
+**Advisory** (printed under `--verbose`, deliberately does *not* gate): the
+field-by-field diff between an Elm payload and what the shim reads. Those
+heuristics are usually right and not yet trusted enough to fail a build, so
+until they are, **field-name agreement between Elm and the shim is checked by
+eye on those tags, not by a machine.** That is the honest current state.
+
+**Counts and mismatches are deliberately not restated here** — they are
+whatever the checker prints, and quoting them by hand is the habit that
+produced the false claim above. Run:
+
+```
+bun run scripts/check-port-parity.ts --verbose
+```
+
+For the record, on 2026-07-27 it reported 35 Elm command tags against 35 shim
+handlers, 42 shim response tags against 36 Elm receive branches, and three
+open mismatches: the `watchEvent` tag collision above, plus `callResult` and
+`unknownCmd`, which the shim sends and no Elm module decodes or documents.
+The library-level decoder gap is genuine but bounded: several response tags
+(`gasEstimate`, `logs`, `subscribed`, …) are *documented app-dispatch* tags
+that an app matches by hand, which is also why there is no single total
+inbound decoder — see the design note below.
+
+### Port-layer behaviour
+
+Exception containment and the error-tag surface are audited in
+`JS_PORT_PROOF.md`, re-done 2026-07-27 against the TypeScript bridge (the
+previous audit described a 509-line JavaScript file that no longer exists).
+F1–F5 and F8 are fixed; F6 is only partly fixed; **F7's "resolved" verdict was
+false and has been retracted** — there is no context field and failures are
+not unified on one tag. Open findings F7 and F9–F13 are listed there.
 
 ---
 

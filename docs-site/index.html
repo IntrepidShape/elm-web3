@@ -11,7 +11,11 @@
 <main class="page">
 
 <header class="hero">
-  <p class="hero__kicker">intrepidshape/elm-web3 <span class="hero__version">1.4.4</span> · elm-web3-ui <span class="hero__version">2.3.1</span></p>
+  <!-- Version pills are GENERATED. Do not hand-edit them: they were typed once
+       and drifted three minor versions behind the registry. Re-render with
+       `bun run docs-site/build-versions.ts`; verify with the same command and
+       `--check`, which reads both packages' elm.json. -->
+  <p class="hero__kicker">intrepidshape/elm-web3 <span class="hero__version" data-pkg="elm-web3">2.0.0</span> · elm-web3-ui <span class="hero__version" data-pkg="elm-web3-ui">2.4.0</span></p>
   <h1>What is actually proved</h1>
   <p class="hero__lead">
     Most libraries tell you they are correct. This one shows you the machine
@@ -77,15 +81,18 @@
     <svg viewBox="0 0 760 140" role="img" aria-label="Bar chart of verification coverage by grade" id="coverage-chart">
       <!-- values injected at build-audit time; keep in sync with COVERAGE.md -->
       <g class="bar bar--proved"><rect x="170" y="18"  height="26" width="260"/><text x="12" y="36" class="bar__label">Proved (Lean)</text><text x="440" y="36" class="bar__n">26</text></g>
-      <g class="bar bar--tlc">   <rect x="170" y="56"  height="26" width="140"/><text x="12" y="74" class="bar__label">Model-checked (TLC)</text><text x="320" y="74" class="bar__n">14</text></g>
+      <g class="bar bar--tlc">   <rect x="170" y="56"  height="26" width="190"/><text x="12" y="74" class="bar__label">Model-checked (TLC)</text><text x="370" y="74" class="bar__n">19</text></g>
       <g class="bar bar--fuzz">  <rect x="170" y="94"  height="26" width="310"/><text x="12" y="112" class="bar__label">Property-tested (fuzz)</text><text x="490" y="112" class="bar__n">31</text></g>
       
       
     </svg>
     <figcaption>
-      Counts as of 2026-07-02: all ten Lean proof files check clean on the
-      pinned toolchain and the corpus is sorry-free — every stated theorem
-      is proved. The chart moves only when a checker's exit code does.
+      Lean and fuzz counts as of 2026-07-02: all ten Lean proof files check
+      clean on the pinned toolchain and the corpus is sorry-free — every
+      stated theorem is proved. The TLC row was recounted 2026-07-27, when
+      <code>WalletSpec.tla</code> was rewritten against the 2.0.0 wallet: the
+      five new rows are the request-id properties that machine did not have
+      before. The chart moves only when a checker's exit code does.
     </figcaption>
   </figure>
 </section>
@@ -111,7 +118,7 @@
       </defs>
       <!-- nodes -->
       <g class="st st--rest"><rect x="20"  y="120" width="130" height="40" rx="20"/><text x="85"  y="145">Disconnected</text></g>
-      <g class="st">         <rect x="210" y="40"  width="120" height="40" rx="20"/><text x="270" y="65">Connecting</text></g>
+      <g class="st">         <rect x="210" y="40"  width="120" height="40" rx="20"/><text x="270" y="65">Connecting id</text></g>
       <g class="st st--ok">  <rect x="420" y="40"  width="120" height="40" rx="20"/><text x="480" y="65">Connected</text></g>
       <g class="st st--warn"><rect x="420" y="150" width="120" height="40" rx="20"/><text x="480" y="175">WrongChain</text></g>
       <g class="st st--rest"><rect x="210" y="230" width="120" height="40" rx="20"/><text x="270" y="255">ReadOnly</text></g>
@@ -133,9 +140,16 @@
       TLC verified: <em>Connected/WrongChain always carry an address and
       chain · a session always returns to a resting state (Disconnected or
       ReadOnly) · Connected exits only to WrongChain, Disconnected, or Error ·
-      ReadOnly exits only via a wallet announcement.</em>
+      ReadOnly exits only via a wallet announcement · while an attempt is in
+      flight, a response naming any other request id leaves the machine
+      completely unchanged · a rejection, failure or timeout only ever resolves
+      the request it names · re-entering Connecting only ever installs a
+      strictly newer id.</em>
       The ✓ edge means a user who switches chains by hand in the wallet UI
-      recovers instantly — no app round-trip required.
+      recovers instantly — no app round-trip required. <code>Connecting id</code>
+      carries the request id that makes the last three properties statable:
+      clicking Connect again supersedes the attempt in flight instead of being
+      swallowed, and the superseded attempt can no longer clobber the new one.
     </figcaption>
   </figure>
 

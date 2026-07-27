@@ -101,13 +101,28 @@ states are genuine sinks (the Elm Sign machine has no reset).
 action. The 2026-07-02 audit found and resolved 9 divergences, including 3
 real Elm bugs (see the divergence log there and `CHANGELOG.md`).
 
+The 2026-07-27 re-audit rewrote `WalletSpec.tla` against 2.0.0: the previous
+spec modeled a `Connecting` state with no `RequestId`, which the code stopped
+having on 2026-07-07 — so between then and now, this table was claiming a
+model check of the wrong machine. Three of the property/invariant statements
+above are new because the machine is; two open code-level findings (D-W4,
+D-W5) came out of the re-audit and are logged there rather than smoothed over.
+`scripts/check-spec-lockstep.ts` now fails CI when a state machine changes
+without its spec, and was demonstrated red against the commits that caused
+this before being trusted.
+
 | Property | File |
 |----------|------|
 | Wallet: `Connected`/`WrongChain` always carry address+chain | `tla/WalletSpec.tla` |
-| Wallet: `Disconnected`/`Error`/`ReadOnly` never carry an address | `tla/WalletSpec.tla` |
+| Wallet: `Disconnected`/`Error`/`ReadOnly`/`Connecting` never carry an address | `tla/WalletSpec.tla` |
+| Wallet: a connect `RequestId` is in flight exactly while `Connecting`, and was actually minted (`ConnectingIffActiveRequest`, `ActiveRidWasIssued`) | `tla/WalletSpec.tla` |
+| Wallet: `WrongChain` always reports a chain other than the expected one (`WrongChainIsOffExpected`) — its dual is **false**, see D-W4 | `tla/WalletSpec.tla` |
 | Wallet: every session eventually returns to a resting state (`Disconnected` or `ReadOnly`), under weak fairness on `UserDisconnect` (`EventuallyAtRest`) | `tla/WalletSpec.tla` |
 | Wallet: `Connected` only exits to `WrongChain`/`Disconnected`/`Error` (`ConnectedStability`) | `tla/WalletSpec.tla` |
 | Wallet: `ReadOnly` only exits via a `WalletConnected` announcement (`ReadOnlySticky`) | `tla/WalletSpec.tla` |
+| Wallet: while a connect attempt is in flight, a port response naming any other request id leaves the machine completely unchanged (`StaleConnectResponseDropped`) | `tla/WalletSpec.tla` |
+| Wallet: a rejection, failure or timeout only ever resolves the request it names (`ResolutionRequiresActiveRequest`) | `tla/WalletSpec.tla` |
+| Wallet: re-entering `Connecting` only ever installs a strictly newer id (`SupersedeUsesFreshId`) — assuming a caller that increments its counter | `tla/WalletSpec.tla` |
 | Transaction: no **port message** transitions a terminal state; the only exit is the explicit `TxReset` to `Idle` (from any terminal, incl. `Confirmed`) | `tla/TransactionSpec.tla` |
 | Transaction: `Submitted` only reachable from `AwaitingSignature` | `tla/TransactionSpec.tla` |
 | Transaction: `Confirming` always carries a valid hash | `tla/TransactionSpec.tla` |
@@ -136,7 +151,13 @@ user eventually fixes their chain — see the comment in `WalletSpec.tla`).
 
 ### Manual — JS port layer
 
-- `JS_PORT_PROOF.md`: exhaustive case analysis of all 11 command handlers showing no exception escapes the boundary and every failure path sends a typed response.
+- `JS_PORT_PROOF.md`: case-by-case analysis of all 35 command handlers in
+  `js/elm-web3-ports.ts` (re-audited 2026-07-27 against blob `8fb1b2ab`).
+  Verdict: no exception escapes the command dispatch and every failure path
+  sends a tagged response — but the listener/subscription surface is **not**
+  exception-tight, and the "failures unified with a context field" claim from
+  the 2026-07-02 re-audit was false and has been retracted. Open findings are
+  listed in that file; this is a **Manual** grade, not a machine-checked one.
 
 ### Elm fuzz — property-tested runtime behaviour
 

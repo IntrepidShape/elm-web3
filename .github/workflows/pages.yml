@@ -26,6 +26,11 @@ jobs:
         run: sed -i "s/proofs.css/proofs.css?v=${GITHUB_SHA::8}/" docs-site/index.html
 
       - uses: actions/configure-pages@v5
+
+      - uses: oven-sh/setup-bun@v2
+      - name: Version pills must match elm.json
+        run: bun run docs-site/build-versions.ts --check
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: docs-site

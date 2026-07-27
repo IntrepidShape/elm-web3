@@ -276,8 +276,12 @@ each from its own directory.
 ## Track D — Spec and proof truth
 
 **D1. `proofs/tla/WalletSpec.tla:71`** still models bare `Connecting`; the code
-was rewritten 2026-07-16 (`625d2d1`) adding `RequestId`, supersede semantics and
-three `Msg` variants. This violates `CONTRIBUTING.md` rule 2 and inflates the
+was rewritten 2026-07-07 in `837991a` (+230/-43) and `1657054`, adding
+`RequestId`, supersede semantics and three `Msg` variants. (An earlier revision
+of this doc blamed the 2.0.0 release commit `625d2d1`, which touched
+`Wallet.elm` by five lines of doc comment and nothing else. Corrected
+2026-07-23 -- the lockstep checker refused to flag the commit this doc named,
+which is how the error surfaced. A spec is not exempt from its own gates.) This violates `CONTRIBUTING.md` rule 2 and inflates the
 proofs page for the current release. For a project whose sole differentiator is
 verification honesty, this is the one a skeptic finds first.
 
