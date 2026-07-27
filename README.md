@@ -52,28 +52,67 @@ Most DeFi exploits hit the frontend, not the contracts. The JS dapp stack maximi
 elm install intrepidshape/elm-web3
 ```
 
-Copy `js/elm-web3-ports.js` into your project and wire it up after your compiled Elm bundle:
+Copy `js/elm-web3-ports.js` into your project and wire it up after your compiled Elm bundle.
+
+**The shipped `.js` is an ES module bundle** — it ends in `export{...}`. Load it with `type="module"` and an `import`. A classic `<script src="elm-web3-ports.js">` throws `SyntaxError: Unexpected token 'export'` and nothing works:
 
 ```html
 <script src="elm.js"></script>
-<script src="elm-web3-ports.js"></script>
-<script>
-  var app = Elm.Main.init({ node: document.getElementById('app') });
-  setupPorts(app);
+<script type="module">
+  import { setupPorts } from './elm-web3-ports.js'
+
+  const app = Elm.Main.init({ node: document.getElementById('app') })
+
+  setupPorts(app, {
+    // Optional. Omit it and every read goes through the connected wallet.
+    // Supply it and reads also work with no wallet at all (Wallet.ReadOnly).
+    rpcUrls: ['https://rpc.example.org', 'https://rpc-backup.example.org'],
+  })
 </script>
 ```
+
+ES modules are not loaded over `file://`, so serve the directory (`bunx serve .`) rather than double-clicking the HTML. Working versions of exactly this wiring are in [`examples/hello-read/index.html`](examples/hello-read/index.html) (no wallet, one `eth_call`) and [`examples/basic/index.html`](examples/basic/index.html) (wallet + transfer).
 
 Declare two ports in your Elm app:
 
 ```elm
-port module Ports exposing (..)
+port module Ports exposing (web3Cmd, web3Sub)
 
-import Json.Encode as E
 import Json.Decode as D
+import Json.Encode as E
+
 
 port web3Cmd : E.Value -> Cmd msg
+
+
 port web3Sub : (D.Value -> msg) -> Sub msg
 ```
+
+### What the shim exports
+
+`js/elm-web3-ports.js` is built from the type-checked `js/elm-web3-ports.ts` by `bun js/build.ts`; `js/elm-web3-ports.d.ts` carries the types for TS consumers. Four entry points plus three type guards, and no npm dependencies:
+
+| Export | Signature | Use it for |
+|---|---|---|
+| `setupPorts` | `(app, opts?: SetupOptions) => void` | Required. Subscribes `web3Cmd`, starts emitting on `web3Sub`. Call once, right after `Elm.Main.init`. |
+| `watchWallets` | `(app) => void` | EIP-6963 multi-wallet discovery. Emits `walletsDiscovered`; feed it to `Wallet.decoder` and render a picker. Call after `setupPorts`. |
+| `registerProvider` | `(app, info, provider) => void` | Slot a non-EIP-6963 provider (WalletConnect, Coinbase SDK, an embedded wallet) into that same picker. `info` is `{ name, icon, rdns }`. Idempotent per `rdns`. |
+| `setupExternalProvider` | `(app, provider) => void` | Bring your own EIP-1193 transport and make it *the* provider. Rebinds `chainChanged` / `accountsChanged` / `disconnect` so Elm stays in sync. |
+| `isHex`, `isAddress`, `isTxHash` | `(value: unknown) => boolean` | Type guards, if you have your own JS/TS at the boundary. |
+
+`SetupOptions` is the entire read-only / no-wallet path:
+
+```ts
+interface SetupOptions {
+  rpcUrls?: readonly string[]  // preferred: pool of JSON-RPC HTTPS endpoints
+  wsUrls?:  readonly string[]  // eth_subscribe endpoints; derived from rpcUrls (https -> wss) if omitted
+  rpcUrl?:  string             // deprecated single-endpoint alias for rpcUrls
+}
+```
+
+A connected wallet is canonical for every read; `rpcUrls` is the fallback used when there is no wallet or the wallet errors on a read. The pool order is shuffled per page load, so no endpoint is trusted by default, and an endpoint that returns three consecutive transport failures is benched for 60 seconds. Logical JSON-RPC errors (a revert, say) propagate immediately rather than counting as a health signal — every endpoint returns the same answer for a given query. Writes never touch the pool.
+
+With `rpcUrls` set and no wallet present, the shim emits `readOnly` and `Wallet.State` lands on `ReadOnly`: reads work, writes are a compile-time impossibility.
 
 ## Design
 
@@ -84,6 +123,8 @@ State machines are central to the design. `Wallet.State`, `Transaction.Status`, 
 The JS bridge has no npm dependencies. It calls `window.ethereum.request()` directly.
 
 ## Modules
+
+> Unless a block says otherwise, the `elm` blocks below are **signature listings and fragments**, not compilable modules — they omit imports and the surrounding program so the shape of each API is readable at a glance. Blocks introduced as *"a complete, compiling module"* are exactly that: paste one into `src/Main.elm` and it builds against 2.0.0 unchanged. For whole programs you can build and run, see [`examples/`](examples/), which CI compiles on every push.
 
 ### `Web3.Types`
 
@@ -110,96 +151,151 @@ Wallet state as an explicit state machine:
 ```elm
 type State
     = Disconnected
-    | ReadOnly                              -- rpcUrl set, no wallet
-    | Connecting
+    | ReadOnly                                        -- rpcUrls set, no wallet
+    | Connecting RequestId                            -- id of the attempt in flight
     | Connected { address : Address, chainId : ChainId }
     | WrongChain { address : Address, chainId : ChainId } ChainId
     | Error String
+
+type alias RequestId =
+    Int
 ```
 
-```elm
-startConnect : State -> State
-update : ChainId -> Msg -> State -> State
+`Connecting` carries a `RequestId` because a user can click Connect, give up, pick a different wallet, and click again while the first prompt is still open. **Your app owns the counter** — increment it on every connect attempt; this module only compares ids, it never mints them. `update` drops any response tagged with an id that is no longer the current one, so a stale response can never clobber a newer attempt and you need no "already connecting, ignore this click" guard.
 
-connect, disconnect : WalletCmd
+```elm
+startConnect   : RequestId -> State -> State
+timeoutConnect : RequestId -> State -> State
+update         : ChainId -> Msg -> State -> State
+
+isConnecting        : State -> Bool
+connectingRequestId : State -> Maybe RequestId
+
+connect             : RequestId -> WalletCmd
+selectWallet        : RequestId -> String -> WalletCmd   -- EIP-6963 RDNS
+disconnect          : WalletCmd
 switchChain         : ChainId -> WalletCmd
-selectWallet        : String  -> WalletCmd   -- EIP-6963 RDNS
-addChain            : ChainConfig -> WalletCmd   -- EIP-3085
+addChain            : ChainConfig -> WalletCmd           -- EIP-3085
 watchAsset          : { address, symbol, decimals, image } -> WalletCmd  -- EIP-747
-requestPermissions, getPermissions : WalletCmd  -- EIP-2255
+requestPermissions, getPermissions : WalletCmd           -- EIP-2255
 
 encode  : WalletCmd -> E.Value
 decoder : D.Decoder Msg
 ```
 
-A minimal wallet flow:
+A minimal wallet flow — a complete, compiling module:
 
 ```elm
+port module Main exposing (main)
+
+import Browser
+import Html exposing (Html, button, text)
+import Html.Events exposing (onClick)
+import Json.Decode as D
+import Json.Encode as E
+import Web3.Chain as Chain
+import Web3.Types as T
+import Web3.Wallet as Wallet
+
+
+port web3Cmd : E.Value -> Cmd msg
+
+
+port web3Sub : (D.Value -> msg) -> Sub msg
+
+
 type alias Model =
     { wallet : Wallet.State
+    , nextRequestId : Wallet.RequestId
     , providers : List Wallet.WalletProvider
     }
+
 
 type Msg
     = ConnectWallet
     | PickWallet String
     | Web3Msg D.Value
 
+
 expectedChain : T.ChainId
 expectedChain =
     Chain.chainId Chain.pulsechain
 
+
+update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+        -- Call startConnect unconditionally, even while already Connecting.
+        -- The fresh id supersedes the attempt in flight; no guard needed.
         ConnectWallet ->
-            ( { model | wallet = Wallet.startConnect model.wallet }
-            , Ports.web3Cmd (Wallet.encode Wallet.connect)
+            ( { model
+                | wallet = Wallet.startConnect model.nextRequestId model.wallet
+                , nextRequestId = model.nextRequestId + 1
+              }
+            , web3Cmd (Wallet.encode (Wallet.connect model.nextRequestId))
             )
 
         PickWallet rdns ->
-            ( model
-            , Ports.web3Cmd (Wallet.encode (Wallet.selectWallet rdns))
+            ( { model
+                | wallet = Wallet.startConnect model.nextRequestId model.wallet
+                , nextRequestId = model.nextRequestId + 1
+              }
+            , web3Cmd (Wallet.encode (Wallet.selectWallet model.nextRequestId rdns))
             )
 
         Web3Msg raw ->
             case D.decodeValue Wallet.decoder raw of
                 Ok walletMsg ->
-                    let
-                        newWallet =
-                            Wallet.update expectedChain walletMsg model.wallet
-
-                        providers =
+                    ( { model
+                        | wallet = Wallet.update expectedChain walletMsg model.wallet
+                        , providers =
                             case walletMsg of
-                                Wallet.WalletsDiscovered ps -> ps
-                                _ -> model.providers
-                    in
-                    ( { model | wallet = newWallet, providers = providers }
+                                Wallet.WalletsDiscovered ps ->
+                                    ps
+
+                                _ ->
+                                    model.providers
+                      }
                     , Cmd.none
                     )
 
                 Err _ ->
                     ( model, Cmd.none )
 
+
+view : Model -> Html Msg
 view model =
     case model.wallet of
         Wallet.Disconnected ->
             button [ onClick ConnectWallet ] [ text "Connect" ]
 
-        Wallet.Connecting ->
-            text "Connecting…"
+        Wallet.Connecting _ ->
+            text "Connecting..."
 
         Wallet.Connected info ->
             text (T.addressToString info.address)
 
-        Wallet.WrongChain _ expected ->
-            button [ onClick (PickWallet "") ] [ text "Switch network" ]
+        Wallet.WrongChain _ _ ->
+            button [ onClick ConnectWallet ] [ text "Switch network" ]
 
         Wallet.ReadOnly ->
             text "Read-only"
 
         Wallet.Error err ->
             text ("Error: " ++ err)
+
+
+main : Program () Model Msg
+main =
+    Browser.element
+        { init = \_ -> ( Model Wallet.Disconnected 1 [], Cmd.none )
+        , update = update
+        , view = view
+        , subscriptions = \_ -> web3Sub Web3Msg
+        }
 ```
+
+Upgrading from 1.x? The `Connecting` / `startConnect` / `connect` arity changes above are breaking; [`docs/UPGRADING.md`](docs/UPGRADING.md) has the before/after and the compatibility matrix.
 
 ---
 
@@ -588,6 +684,16 @@ The `proofs/` directory contains Lean 4 proofs and TLA+ specifications.
 - `TransactionSpec.tla` — terminal states stay terminal, confirmation count is monotonic
 
 See `proofs/COVERAGE.md` for the full coverage map. All proofs use only core Lean 4 — no Mathlib.
+
+## Security
+
+No external audit has been performed. [`SECURITY.md`](SECURITY.md) states exactly what is machine-checked and what is not, how to reproduce and pin the JS shim's bytes, and — because the Elm registry is append-only and nothing can ever be unpublished — the deprecate-and-supersede procedure for a security patch.
+
+Disclosure: [Jake@intrepiddev.com.au](mailto:Jake@intrepiddev.com.au), subject `elm-web3 security`.
+
+## Upgrading
+
+[`docs/UPGRADING.md`](docs/UPGRADING.md) — 1.x to 2.0.0 with before/after code, plus the elm-web3 ↔ elm-web3-ui ↔ shim compatibility matrix. Upgrading the Elm package without replacing the JS shim is the failure mode to avoid.
 
 ## Prior art
 

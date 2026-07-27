@@ -8,7 +8,12 @@ Shows:
   - Sending a transfer (eth_sendTransaction)
   - Full transaction lifecycle display
 
-Wire up in index.html with elm-web3-ports.js.
+Wire up in index.html with the canonical shim shipped in the package
+(`js/elm-web3-ports.js`), loaded as an ES module -- see this example's
+`index.html`.
+
+Build:  cd examples/basic && elm make src/Main.elm --output=elm.js
+Open:   index.html
 
 -}
 
@@ -58,6 +63,7 @@ type BalanceState
 
 type alias Model =
     { wallet : Wallet.State
+    , nextRequestId : Wallet.RequestId
     , tokenAddress : String
     , balance : BalanceState
     , recipient : String
@@ -69,6 +75,10 @@ type alias Model =
 init : () -> ( Model, Cmd Msg )
 init _ =
     ( { wallet = Wallet.Disconnected
+
+      -- The app owns the connect-attempt counter; the library only compares
+      -- ids, it never mints them. Increment on every startConnect.
+      , nextRequestId = 1
       , tokenAddress = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
       , balance = BalanceIdle
       , recipient = ""
@@ -102,8 +112,18 @@ update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         ConnectWallet ->
-            ( { model | wallet = Wallet.Connecting }
-            , web3Cmd (Wallet.encode Wallet.connect)
+            -- Mint a fresh RequestId, move the state machine into
+            -- `Connecting rid`, and tag the port command with the same id so
+            -- a response from a superseded attempt can never clobber this one.
+            let
+                rid =
+                    model.nextRequestId
+            in
+            ( { model
+                | wallet = Wallet.startConnect rid model.wallet
+                , nextRequestId = rid + 1
+              }
+            , web3Cmd (Wallet.encode (Wallet.connect rid))
             )
 
         DisconnectWallet ->
@@ -188,6 +208,15 @@ handleWeb3Response value model =
         "connected" ->
             routeWalletMsg value model
 
+        "connectRejected" ->
+            routeWalletMsg value model
+
+        "connectPending" ->
+            routeWalletMsg value model
+
+        "connectFailed" ->
+            routeWalletMsg value model
+
         "disconnected" ->
             ( { model | wallet = Wallet.Disconnected }, Cmd.none )
 
@@ -197,7 +226,13 @@ handleWeb3Response value model =
         "accountChanged" ->
             routeWalletMsg value model
 
-        "error" ->
+        "readOnly" ->
+            routeWalletMsg value model
+
+        "switchChainOk" ->
+            routeWalletMsg value model
+
+        "walletsDiscovered" ->
             routeWalletMsg value model
 
         -- Call result
@@ -220,16 +255,18 @@ handleWeb3Response value model =
             routeTxMsg value model
 
         "failed" ->
-            routeTxMsg value model
-
-        "rejected" ->
-            -- rejected can come from wallet connect or tx signing.
-            -- Route to tx if one is pending, otherwise treat as wallet rejection.
+            -- `failed` is shared: a tx failure when one is in flight,
+            -- otherwise a wallet-level error.
             if Tx.isPending model.transferTx then
                 routeTxMsg value model
 
             else
-                ( { model | wallet = Wallet.Disconnected }, Cmd.none )
+                routeWalletMsg value model
+
+        "rejected" ->
+            -- Since 2.0.0 a rejected *connect* arrives as `connectRejected`,
+            -- so a bare `rejected` is always the signing step of a tx.
+            routeTxMsg value model
 
         _ ->
             ( model, Cmd.none )
@@ -289,8 +326,11 @@ viewWallet model =
             Wallet.Disconnected ->
                 button [ onClick ConnectWallet ] [ text "Connect Wallet" ]
 
-            Wallet.Connecting ->
+            Wallet.Connecting _ ->
                 p [] [ text "Connecting..." ]
+
+            Wallet.ReadOnly ->
+                p [] [ text "Read-only (RPC configured, no wallet)." ]
 
             Wallet.Connected info ->
                 div []

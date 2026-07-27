@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>elm-web3 hello-read</title>
+    <style>
+      body { background: #1a1a1a; color: #e0e0e0; font-family: monospace; padding: 24px; }
+      code { font-size: 1.1rem; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <!--
+      Build the Elm side first:  elm make src/Main.elm --output=elm.js
+      Then serve this directory: bunx serve .
+
+      The shim is an ES module bundle, so it must be loaded with
+      type="module" and an `import`. A classic <script src> throws
+      SyntaxError: Unexpected token 'export'.
+
+      There is no wallet in this example -- `rpcUrls` is the entire
+      transport. The pool order is shuffled per page load and any endpoint
+      that fails three times in a row is benched for 60 seconds.
+    -->
+    <script src="elm.js"></script>
+    <script type="module">
+      import { setupPorts } from '../../js/elm-web3-ports.js'
+
+      const app = Elm.Main.init({ node: document.getElementById('app') })
+
+      setupPorts(app, {
+        rpcUrls: ['https://eth.llamarpc.com', 'https://rpc.ankr.com/eth'],
+      })
+    </script>
+  </body>
+</html>

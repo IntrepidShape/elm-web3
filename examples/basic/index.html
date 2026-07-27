@@ -14,11 +14,29 @@
   </head>
   <body>
     <div id="app"></div>
+
+    <!--
+      Build the Elm side first:   elm make src/Main.elm --output=elm.js
+      Then serve this directory over http (ES modules do not load from file://):
+                                  bunx serve .
+
+      The shim is the canonical one shipped in the package -- js/elm-web3-ports.js.
+      It is an ES module bundle, so it MUST be loaded with type="module" and an
+      `import`; a classic <script src> throws SyntaxError: Unexpected token 'export'.
+      In a real app, copy that file next to your bundle instead of reaching up
+      two directories.
+    -->
     <script src="elm.js"></script>
     <script type="module">
-      import { setupPorts } from './ports.js'
+      import { setupPorts } from '../../js/elm-web3-ports.js'
+
       const app = Elm.Main.init({ node: document.getElementById('app') })
-      setupPorts(app)
+
+      setupPorts(app, {
+        // Public read fallback used when no wallet is injected. The wallet
+        // provider is canonical for reads whenever one is connected.
+        rpcUrls: ['https://eth.llamarpc.com', 'https://rpc.ankr.com/eth'],
+      })
     </script>
   </body>
 </html>
