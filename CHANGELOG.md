@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.1.0 — 2026-07-23
 
 > **Read this section even though the version bump is MINOR.** `elm diff`
 > classifies a release by comparing *types*, and three functions below changed

@@ -3,7 +3,7 @@
     "name": "intrepidshape/elm-web3",
     "summary": "Typed EVM bindings for Elm: contracts, ABI, wallets, signing, subscriptions.",
     "license": "MIT",
-    "version": "2.0.0",
+    "version": "2.1.0",
     "exposed-modules": [
         "Web3",
         "Web3.Types",
