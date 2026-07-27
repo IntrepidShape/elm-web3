@@ -2,6 +2,62 @@
 
 ## Unreleased
 
+> **Read this section even though the version bump is MINOR.** `elm diff`
+> classifies a release by comparing *types*, and three functions below changed
+> *behaviour* behind identical type signatures. The tool cannot see that, so
+> this entry is the only warning you get. Each was a bug producing wrong
+> numbers, not a contract anyone could safely depend on — but if you worked
+> around one of them, that workaround is now itself the bug.
+
+### Fixed — signed integers decoded as unsigned
+
+`Abi.Decode.int256` was defined as `int256 = uint256`: no two's-complement
+inversion at all. `-1` decoded as 2^256-1. Any `int*` return value — a
+Uniswap V3 tick, an oracle delta, a funding rate, a rebase delta, a PnL — read
+back as an astronomically wrong positive number. The encoder
+(`Abi.Calldata.int256`) had always written correct two's complement, so the
+encoder and decoder in this package were not inverses of each other.
+
+- **`Abi.Decode.int256`** now interprets a 0x-prefixed word as two's
+  complement. Decimal input (what the JS bridge sends) is unchanged.
+- **Added `Abi.Decode.int256Slot`** — the signed counterpart of `uint256Slot`,
+  which simply did not exist. Use it for every `int*` slot in a raw ABI
+  response; `uint256Slot` on a negative value is the bug above.
+
+### Fixed — corrupt calldata when a static tuple precedes a dynamic argument
+
+`Abi.Calldata` computed the head section as `slotCount * 32`. A `tuple` of
+all-static components is encoded inline as a single *multi-word* static slot,
+so counting slots understated the head and every following dynamic offset
+pointed into the wrong place. `foo((uint256,uint256),string)` emitted offset
+`0x40` where `0x60` is correct — the contract then read the string's length
+from the offset word itself. Head width is now summed in bytes. Signatures
+shaped like `(Params, bytes)` or `(Order, bytes signature)` were affected;
+flat signatures never were.
+
+### Fixed — negative amounts formatted as garbage
+
+`Units.formatUnits` formatted a signed value directly, so the minus sign ended
+up *inside* the fraction: `formatUnits 18 (-1.5e15 wei)` returned `"0.0-15"`,
+and `formatEther (-1 wei)` returned `"0.0000000000000000-1"`. The sign is now
+applied once to the finished string. This surfaces through
+`elm-web3-ui`'s `Amount.formatWei` too, so any balance display inherited it.
+
+### Fixed — parseUnits accepted malformed input and returned a plausible number
+
+`Units.parseUnits` passed the fractional part to `BigInt.fromString`, which
+accepts a leading `-` or `+`. `parseUnits 18 "1.-5"` returned 0.95e18 with no
+error reported — a user typo silently became a different amount. Fractions
+must now be digits; anything else returns `Nothing`. **If you previously
+relied on a `Just` here, you were relying on a wrong number.**
+
+### Docs
+
+- The `Units` module overview no longer demonstrates `BigInt.fromInt` on an
+  18-decimal literal. An Elm `Int` is a JS double, so
+  `BigInt.fromInt 1500000000000000000` yields `999996861446400000000` — the
+  headline example taught a corrupting pattern. Use `BigInt.fromString`.
+
 ### Docs — ASCII-only doc comments (registry-critical, CI-enforced)
 
 All doc comments are now pure ASCII. elm 0.19.1's client-side docs.json
