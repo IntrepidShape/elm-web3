@@ -62,9 +62,20 @@ grep -c connectFailed   js/elm-web3-ports.ts -> 6   js/elm-web3-ports.js -> 0
   (`git stash` the fix, run, confirm failure, restore) before its gate counts.
   This is the `check-no-tier3.ts` standard from
   `docs/goal-2026-07-12-mcp-tool-surface.md`.
-- **Semver honesty.** Several Track A/B fixes change exposed types. `elm bump`
-  is the arbiter; a MAJOR is acceptable and expected. Do not contort an API to
-  dodge a version bump.
+- **Semver honesty.** Several fixes change exposed types. `elm bump` is the
+  arbiter; a MAJOR is acceptable and expected. Do not contort an API to dodge a
+  version bump. Note `elm bump` compares **types only** -- a function whose
+  behaviour changes behind an identical signature is classified MINOR, so the
+  CHANGELOG is the only signal a consumer gets and must carry it explicitly.
+- **No external users yet (as of 2026-07-29) -- so break things properly NOW.**
+  Only two first-party dapps consume these packages. The cost of an API change
+  today is a sed across two repos the maintainer controls; the cost after
+  adoption is permanent, because the Elm registry cannot unpublish. This is the
+  window to remove a bad module rather than preserve it, to rename rather than
+  alias, and to fix a signature rather than add a second one beside it. Prefer
+  the correct surface over the compatible one. Batching changes into one
+  release train is now a convenience (one migration guide instead of four), not
+  a requirement.
 - **ASCII-only doc comments** (CI-enforced). String literals are unaffected.
 - Plain commit messages, no AI attribution — the hook rejects it.
 - `elm-test` must be invoked as `elm-test@0.19.1-revision12`; unpinned pulls a
