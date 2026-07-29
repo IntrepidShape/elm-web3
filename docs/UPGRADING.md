@@ -1,5 +1,114 @@
 # Upgrading
 
+## 2.x to 3.0.0
+
+Six breaking changes. Five are mechanical; the `Contract.Event` one is not.
+
+### 1. `Status` gained `RevertedOnChain Receipt`
+
+A mined-but-reverted transaction used to arrive as `Confirmed`, so every
+consumer had to remember to check `receipt.status`. Add a branch:
+
+```elm
+Tx.Confirmed receipt ->
+    viewSuccess receipt
+
+Tx.RevertedOnChain receipt ->
+    viewReverted receipt          -- on chain, gas spent, state unchanged
+```
+
+**`Confirmed` now means succeeded.** If you had an `if receipt.status then ...
+else ...` *inside* your `Confirmed` branch, delete it.
+
+But if your `receipt.status` check lives in a **port handler that constructs
+the Status** rather than in a view that consumes it, do NOT delete it --
+re-route its else-branch from `Tx.Failed` to `Tx.RevertedOnChain`. Deleting it
+there would remove revert detection entirely. (Found the hard way migrating a
+real app.)
+
+**Watch for catch-alls.** `case status of ... _ -> ...` still compiles, and
+your reverted transaction lands silently in whatever the fallback does. Grep
+for `_ ->` on any `Status` match and decide deliberately. This bit the ui
+package itself: a reverted transaction rendered as "Confirmed" in a package
+whose tests were all green.
+
+**Any new status string you branch on probably needs CSS.** A `statusClass`
+gaining `"reverted"` is a compile-clean change that renders unstyled.
+
+### 2. `Wallet.State.Error` carries a typed `Failure`
+
+```elm
+-- before
+Wallet.Error err -> text ("Error: " ++ err)
+-- after
+Wallet.Error err -> text ("Error: " ++ Wallet.failureMessage err)
+```
+
+If you were substring-matching that string to make a decision, pattern-match
+`Failure` instead -- that is why it is typed now.
+
+### 3. Write-path replies carry `Maybe TxId`
+
+`TxSubmitted`, `TxConfirmation`, `TxConfirmed`, `TxFailed` and `TxRejected`
+all lead with `Maybe TxId`. If you track one transaction at a time, `Nothing`
+is correct and honest.
+
+Mind the parentheses: a bare constructor passed as an argument now needs
+wrapping -- `Fuzz.constant (Tx.TxRejected Nothing)`, not
+`Fuzz.constant Tx.TxRejected Nothing`.
+
+### 4. `Receipt` and `ReceiptJson` gained `contractAddress`
+
+`Receipt.contractAddress : Maybe Address`, `ReceiptJson.contractAddress :
+Maybe String`. Update record literals **and** any hand-written structural type
+annotations. Note `ReceiptJson` is not exposed, so if you annotated it
+structurally that annotation will drift on every future field -- this is a
+known rough edge.
+
+### 5. `Contract.Event`'s subscribe half is gone -- and your shim may need work
+
+`EventFilter`, `watchEvent`, `encode` and `decoder` are removed. Use
+`Web3.Subscription` (`open`/`close` with a `LogFilter` builder).
+
+**If you maintain your own `ports.js` fork, porting the Elm is not enough.**
+The old module sent the address under `contract` and had no subscription id;
+`Subscription` sends `id` and `address` and expects `eventLog` replies with
+`id`/`address`/`transactionHash`/`removed`. A fork still speaking the old
+shape will compile fine and then subscribe to the wrong thing and fail every
+decode. Update the shim in the same change, exactly as the 2.0.0 upgrade
+required.
+
+The old API also had an inert `event : String` field -- nothing ever hashed it
+into topic 0. If you relied on it to filter, you were not filtering. Compute
+topic 0 at build time and pass it via `LogFilter`'s topics.
+
+### 6. Every `elm-web3-ui` view takes attributes first (ui 4.0.0)
+
+Insert `[]` as the first argument at every call site. Also
+`ChainGate.chainGate` is now `ChainGate.view` taking a `Config` with named
+`wrongChain`/`content` fields, and `BondingCurve.sparkline` is now
+`BondingCurve.view`.
+
+### Compatibility
+
+| elm-web3 | elm-web3-ui | shim |
+|---|---|---|
+| 3.0.0 | 4.0.0 | ships in the elm-web3 3.0.0 tag |
+| 2.1.0 | 3.0.0 | elm-web3 2.1.0 tag |
+
+### Checklist
+
+- [ ] `RevertedOnChain` branch everywhere you match `Status`, catch-alls audited
+- [ ] CSS for any new status class
+- [ ] `Wallet.failureMessage` at display sites
+- [ ] `Nothing` threaded into the five `Tx.Msg` constructors, parens checked
+- [ ] `contractAddress` in receipt literals and annotations
+- [ ] `Contract.Event` ported to `Subscription`, **and the shim updated to match**
+- [ ] `[]` inserted at every elm-web3-ui view call site
+- [ ] If your build ships a checked-in `elm.js`, rebuild it -- a source-only
+      change does not deploy
+
+
 ## 1.x to 2.0.0
 
 2.0.0 has exactly one breaking theme: **a wallet connect attempt now has an
