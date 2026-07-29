@@ -95,8 +95,11 @@ export type Web3Cmd =
   // `data` (pre-built calldata) wins over `method` + `args` on all three
   // transaction-shaped cmds -- see `_calldataOf`.
   | { readonly tag: "call";          readonly id: string; readonly contract: string; readonly method: string; readonly args: readonly unknown[]; readonly data?: string; readonly from?: string; readonly block?: string }
-  | { readonly tag: "send";          readonly contract: string; readonly method: string; readonly args: readonly unknown[]; readonly data?: string; readonly from?: string; readonly value?: string; readonly gasLimit?: number; readonly skipSimulate?: boolean }
-  | { readonly tag: "estimateGas";   readonly contract: string; readonly method: string; readonly args: readonly unknown[]; readonly data?: string; readonly from?: string; readonly value?: string }
+  // `id` is the optional correlation id set by `Web3.Contract.Send.withId`.
+  // Every reply the write produces echoes it, which is the only way two
+  // writes in flight at once can be told apart on the Elm side.
+  | { readonly tag: "send";          readonly contract: string; readonly method: string; readonly args: readonly unknown[]; readonly data?: string; readonly from?: string; readonly value?: string; readonly gasLimit?: number; readonly skipSimulate?: boolean; readonly id?: string }
+  | { readonly tag: "estimateGas";   readonly contract: string; readonly method: string; readonly args: readonly unknown[]; readonly data?: string; readonly from?: string; readonly value?: string; readonly id?: string }
   | { readonly tag: "multicall";     readonly id: string; readonly calls: readonly CallSpec[] }
   | { readonly tag: "watchEvent";    readonly id: string; readonly address: string; readonly topics?: ReadonlyArray<string | null> }
   | { readonly tag: "unwatchEvent";  readonly id: string }
@@ -137,6 +140,57 @@ const requireWallet = (): Eip1193Provider => {
   if (!w) throw new Error('No wallet found');
   return w;
 };
+
+/**
+ * Attach a correlation id to an outgoing sub message, when the cmd that
+ * caused it carried one.
+ *
+ * The field is OMITTED rather than set to undefined/null when there is no
+ * id: Elm decodes it with `D.maybe (D.field "id" D.string)`, and an absent
+ * field is the only shape that reliably means "this write was not tagged".
+ */
+function _withId(msg: Web3Sub, id: unknown): Web3Sub {
+  return typeof id === 'string' && id.length > 0 ? { ...msg, id } : msg;
+}
+
+/**
+ * The EIP-1193 / JSON-RPC error code, wherever the wallet chose to put it.
+ *
+ * This is the whole point of B3: `err.code` never crossed the boundary, so
+ * `4902` (chain not added to the wallet) arrived in Elm as the string
+ * "Unrecognized chain ID ...", and the switchChain -> addChain -> retry flow
+ * every multi-chain dapp needs could not be written at all. MetaMask reports
+ * it top-level; several wallets and RPC middlewares nest the original error
+ * one or two levels down instead, so all three shapes are checked.
+ */
+function _errorCode(err: unknown): number | undefined {
+  if (typeof err !== 'object' || err === null) return undefined;
+  const e = err as { code?: unknown; data?: { originalError?: { code?: unknown }; code?: unknown }; error?: { code?: unknown } };
+  if (typeof e.code === 'number') return e.code;
+  if (e.data && typeof e.data === 'object') {
+    const inner = e.data as { originalError?: { code?: unknown }; code?: unknown };
+    if (inner.originalError && typeof inner.originalError.code === 'number') return inner.originalError.code;
+    if (typeof inner.code === 'number') return inner.code;
+  }
+  if (e.error && typeof e.error.code === 'number') return e.error.code;
+  return undefined;
+}
+
+/** The raw revert payload, in any of the places wallets bury it. */
+function _errorData(err: unknown): string | undefined {
+  if (typeof err !== 'object' || err === null) return undefined;
+  const e = err as { data?: unknown; error?: { data?: unknown } };
+  const candidates: unknown[] = [
+    e.data,
+    e.data && typeof e.data === 'object' ? (e.data as { data?: unknown }).data : undefined,
+    e.data && typeof e.data === 'object' ? (e.data as { originalError?: { data?: unknown } }).originalError?.data : undefined,
+    e.error && typeof e.error === 'object' ? e.error.data : undefined,
+  ];
+  for (const c of candidates) {
+    if (typeof c === 'string' && (c.startsWith('0x') || c.startsWith('0X'))) return c;
+  }
+  return undefined;
+}
 
 /** Narrow `unknown` (the strict-mode type of caught exceptions) to the
  *  EIP-1193 error shape, wrapping non-Error throws into a typed Error. */
@@ -525,12 +579,18 @@ export function setupPorts(app, options = {}) {
               chainId: parseInt(chainId, 16),
             })
           } catch (err) {
-            if (err.code === 4001) {
+            // `code` rides along on connectFailed too: the Elm side keeps
+            // classifying by `reason`, but a consumer that wants the raw
+            // EIP-1193 code no longer has to parse the wallet's prose.
+            const connectCode = _errorCode(err)
+            if (connectCode === 4001) {
               app.ports.web3Sub.send({ tag: 'connectRejected', requestId })
-            } else if (err.code === -32002) {
+            } else if (connectCode === -32002) {
               app.ports.web3Sub.send({ tag: 'connectPending', requestId })
             } else {
-              app.ports.web3Sub.send({ tag: 'connectFailed', requestId, reason: 'network', error: err.message || String(err) })
+              const failure = { tag: 'connectFailed', requestId, reason: 'network', error: err.message || String(err) }
+              if (typeof connectCode === 'number') failure.code = connectCode
+              app.ports.web3Sub.send(failure)
             }
           }
           break
@@ -605,7 +665,7 @@ export function setupPorts(app, options = {}) {
             method: 'eth_estimateGas',
             params: [txParams],
           })
-          app.ports.web3Sub.send({ tag: 'gasEstimate', gas: parseInt(gasHex, 16).toString() })
+          app.ports.web3Sub.send(_withId({ tag: 'gasEstimate', gas: parseInt(gasHex, 16).toString() }, cmd.id))
           break
         }
 
@@ -646,10 +706,12 @@ export function setupPorts(app, options = {}) {
             method: 'eth_sendTransaction',
             params: [txParams],
           })
-          app.ports.web3Sub.send({ tag: 'submitted', hash })
+          app.ports.web3Sub.send(_withId({ tag: 'submitted', hash }, cmd.id))
 
-          // Poll for confirmation
-          pollReceipt(hash, app, _rpcRequest)
+          // Poll for confirmation. The correlation id rides along so
+          // `confirmation` / `confirmed` / the timeout `failed` name the same
+          // write the `submitted` above did.
+          pollReceipt(hash, app, _rpcRequest, cmd.id)
           break
         }
 
@@ -812,12 +874,18 @@ export function setupPorts(app, options = {}) {
               chainId: parseInt(chainId, 16),
             })
           } catch (err) {
-            if (err.code === 4001) {
+            // `code` rides along on connectFailed too: the Elm side keeps
+            // classifying by `reason`, but a consumer that wants the raw
+            // EIP-1193 code no longer has to parse the wallet's prose.
+            const connectCode = _errorCode(err)
+            if (connectCode === 4001) {
               app.ports.web3Sub.send({ tag: 'connectRejected', requestId })
-            } else if (err.code === -32002) {
+            } else if (connectCode === -32002) {
               app.ports.web3Sub.send({ tag: 'connectPending', requestId })
             } else {
-              app.ports.web3Sub.send({ tag: 'connectFailed', requestId, reason: 'network', error: err.message || String(err) })
+              const failure = { tag: 'connectFailed', requestId, reason: 'network', error: err.message || String(err) }
+              if (typeof connectCode === 'number') failure.code = connectCode
+              app.ports.web3Sub.send(failure)
             }
           }
           break
@@ -967,6 +1035,9 @@ export function setupPorts(app, options = {}) {
               blockNumber: parseInt(receipt.blockNumber, 16),
               gasUsed: parseInt(receipt.gasUsed, 16).toString(),
               status: receipt.status === '0x1',
+              // Only a deployment has one; null everywhere else. Without it a
+              // deployment cannot recover the address it just created.
+              contractAddress: receipt.contractAddress || null,
               logs: (receipt.logs || []).map(log => ({
                 address: log.address, topics: log.topics || [],
                 data: log.data,
@@ -1035,16 +1106,16 @@ export function setupPorts(app, options = {}) {
           if (cmd.value) txParams.value = '0x' + BigInt(cmd.value).toString(16)
           if (cmd.gasLimit) txParams.gas = '0x' + cmd.gasLimit.toString(16)
           const deployHash = await window.ethereum.request({ method: 'eth_sendTransaction', params: [txParams] })
-          app.ports.web3Sub.send({ tag: 'submitted', hash: deployHash })
-          pollReceipt(deployHash, app, _rpcRequest)
+          app.ports.web3Sub.send(_withId({ tag: 'submitted', hash: deployHash }, cmd.id))
+          pollReceipt(deployHash, app, _rpcRequest, cmd.id)
           break
         }
 
         // --- Broadcast pre-signed transaction ---
         case 'sendRawTransaction': {
           const rawHash = await _rpcRequest('eth_sendRawTransaction', [cmd.rawTx])
-          app.ports.web3Sub.send({ tag: 'submitted', hash: rawHash })
-          pollReceipt(rawHash, app, _rpcRequest)
+          app.ports.web3Sub.send(_withId({ tag: 'submitted', hash: rawHash }, cmd.id))
+          pollReceipt(rawHash, app, _rpcRequest, cmd.id)
           break
         }
 
@@ -1097,14 +1168,18 @@ export function setupPorts(app, options = {}) {
           app.ports.web3Sub.send({ tag: 'unknownCmd', cmd: cmd.tag })
       }
     } catch (err) {
-      if (err.code === 4001) {
-        app.ports.web3Sub.send({ tag: 'rejected' })
+      // The correlation id of the cmd that failed, so a failure lands on the
+      // right transaction instead of on all of them.
+      const failedId = cmd && typeof cmd.id === 'string' ? cmd.id : undefined
+      const code = _errorCode(err)
+      if (code === 4001) {
+        app.ports.web3Sub.send(_withId({ tag: 'rejected', code }, failedId))
       } else {
-        const data = err.data || (err.error && err.error.data)
+        const data = _errorData(err)
         const reason = _decodeRevertReason(data)
         // Prefer the on-chain revert reason over the wallet's generic
         // "execution reverted" message — it's the only thing the user can
-        // actually act on (e.g. veToken's `LockTooShort()`, ERC-20's
+        // actually act on (e.g. a `LockTooShort()` custom error, ERC-20's
         // "transfer amount exceeds balance"). Fall back to the wallet
         // message if data is missing or unrecognised.
         const baseMsg = err.message || String(err)
@@ -1112,10 +1187,18 @@ export function setupPorts(app, options = {}) {
           tag: 'failed',
           error: reason ? reason : baseMsg,
         }
+        // THE B3 fix: the numeric code crosses the boundary. 4902 becomes
+        // Web3.Error.ChainNotAdded on the Elm side (so switchChain can be
+        // followed by addChain and a retry), -32002 becomes RequestPending
+        // outside connect, and everything else keeps its code instead of
+        // being flattened into prose.
+        if (typeof code === 'number') {
+          msg.code = code
+        }
         if (data && typeof data === 'string' && data.startsWith('0x')) {
           msg.revertData = data
         }
-        app.ports.web3Sub.send(msg)
+        app.ports.web3Sub.send(_withId(msg, failedId))
       }
     }
   })
@@ -1747,18 +1830,27 @@ function _calldataOf(cmd: { readonly data?: unknown; readonly method?: unknown; 
   return encodeCall(method, args)
 }
 
-async function pollReceipt(hash: string, app: ElmApp, rpc: (method: string, params: readonly unknown[]) => Promise<unknown>): Promise<void> {
+async function pollReceipt(
+  hash: string,
+  app: ElmApp,
+  rpc: (method: string, params: readonly unknown[]) => Promise<unknown>,
+  id?: unknown,
+): Promise<void> {
   for (let i = 0; i < 120; i++) {
     await new Promise((r) => setTimeout(r, 2000))
     try {
       const receipt = await rpc('eth_getTransactionReceipt', [hash])
       if (receipt) {
-        app.ports.web3Sub.send({
+        app.ports.web3Sub.send(_withId({
           tag: 'confirmed',
           hash: receipt.transactionHash,
           blockNumber: parseInt(receipt.blockNumber, 16),
           gasUsed: parseInt(receipt.gasUsed, 16).toString(),
+          // `status` is the EVM's own success flag. Elm splits Confirmed from
+          // RevertedOnChain on exactly this bit: a mined-and-reverted tx spent
+          // the user's gas and did nothing, and must never render as success.
           status: receipt.status === '0x1',
+          contractAddress: receipt.contractAddress || null,
           logs: (receipt.logs || []).map(log => ({
             address: log.address,
             topics: log.topics || [],
@@ -1766,17 +1858,17 @@ async function pollReceipt(hash: string, app: ElmApp, rpc: (method: string, para
             blockNumber: parseInt(log.blockNumber, 16),
             logIndex: parseInt(log.logIndex, 16),
           })),
-        })
+        }, id))
         return
       }
       // Send confirmation count (block distance)
       await rpc('eth_blockNumber', [])
-      app.ports.web3Sub.send({ tag: 'confirmation', hash, count: i + 1 })
+      app.ports.web3Sub.send(_withId({ tag: 'confirmation', hash, count: i + 1 }, id))
     } catch (_) {
       // keep polling
     }
   }
   try {
-    app.ports.web3Sub.send({ tag: 'failed', error: 'Transaction not confirmed after 4 minutes' })
+    app.ports.web3Sub.send(_withId({ tag: 'failed', error: 'Transaction not confirmed after 4 minutes' }, id))
   } catch (_) {}
 }

@@ -33,6 +33,23 @@
  *     `connectPending` -> pure no-op (informational), `connectFailed` ->
  *     Error; each gated on the id matching the ACTIVE request.
  *
+ * v4 (2026-07-29) -- catches the spec up with B3, the typed failure channel:
+ *   - `Error` carries a `Failure`, not a String (`Wallet.elm` State). The
+ *     `ConnectFailureReason` that `Wallet.decoder` had always parsed out of
+ *     the `connectFailed` message was then DISCARDED by `update`
+ *     (`WalletConnectFailed rid _ errorMessage -> Error errorMessage`), so
+ *     "no wallet installed", "wallet returned no accounts" and "the network
+ *     is down" all arrived as one undifferentiated string. `errReason`
+ *     models the reason the Error state now retains, and
+ *     `ConnectFailureReasonPreserved` is the property that says it is the
+ *     reason that actually arrived.
+ *   - The untagged `failed` channel is now a `Web3.Error.Error`
+ *     (`PortFailed`), which is where EIP-1193 4902 becomes `ChainNotAdded`.
+ *     Abstracted here as the reason "port": the FSM transition is the same
+ *     for every code, only the payload differs.
+ *   - A malformed address from the bridge is `PortFailed (DecodeError ..)`,
+ *     modeled as the reason "decode".
+ *
  * v2 behaviour that still holds (unchanged in 2.0.0):
  *   - ReadOnly: rpcUrl present but no injected wallet. Sticky -- the only
  *     exit is a WalletConnected announcement.
@@ -65,6 +82,8 @@
  *                                 or out of any other state)
  *   ActiveRidWasIssued       -- the in-flight id was actually minted
  *   ErrorFlagMirrorsState    -- Error is the only error-carrying state
+ *   ErrorReasonMirrorsState  -- and it always carries a reason; every other
+ *                               state carries none
  *   WrongChainIsOffExpected  -- WrongChain always reports a non-expected chain
  * Properties (temporal/action):
  *   EventuallyAtRest         -- every wallet session eventually returns to a
@@ -82,6 +101,13 @@
  *                               in-flight request
  *   SupersedeUsesFreshId     -- Connecting -> Connecting only ever swaps in a
  *                               STRICTLY NEWER id (the supersede rule)
+ *   ConnectFailureReasonPreserved -- a connectFailed naming the in-flight
+ *                               request lands in Error carrying THAT reason.
+ *                               Non-vacuity: a mutant whose EvtConnectFailed
+ *                               sets errReason' = "network" unconditionally
+ *                               -- which is exactly what the pre-3.0.0 Elm
+ *                               update did by dropping the parsed reason --
+ *                               is reported violated by TLC.
  *
  * NOT claimed, and false -- see the ConnectedChainMayBeStale note below.
  *
@@ -104,13 +130,14 @@ VARIABLES
     chain,            \* Current ConnectedInfo.chainId (or NONE)
     hasError,         \* TRUE when in Error state
     activeRid,        \* RequestId inside `Connecting`, else NO_RID
+    errReason,        \* Why the machine is in Error ("none" when it is not)
     nextRid,          \* Next id the caller will mint (monotone counter)
     lastResp          \* History: the port response delivered by this step
 
 \* The machine proper. Properties about "the response was dropped" are
 \* statements about THIS tuple, not about the bookkeeping variables.
-fsm  == <<state, addr, chain, hasError, activeRid>>
-vars == <<state, addr, chain, hasError, activeRid, nextRid, lastResp>>
+fsm  == <<state, addr, chain, hasError, activeRid, errReason>>
+vars == <<state, addr, chain, hasError, activeRid, errReason, nextRid, lastResp>>
 
 NONE   == "NONE"
 NO_RID == 0
@@ -122,12 +149,21 @@ RIDS == 1..MAX_REQUESTS
 IssuedRids == { r \in RIDS : r < nextRid }
 
 RESP_KINDS == {"none", "connected", "rejected", "pending", "failed", "timeout"}
-NO_RESP    == [rid |-> NO_RID, kind |-> "none"]
+
+\* The three ConnectFailureReason values Wallet.decoder parses out of a
+\* `connectFailed` message, plus the two reasons the other Error paths carry.
+FAILURE_REASONS == {"not_found", "no_accounts", "network"}
+ERROR_REASONS   == FAILURE_REASONS \cup {"decode", "port", "none"}
+
+NO_RESP    == [rid |-> NO_RID, kind |-> "none", reason |-> "none"]
 
 \* Response bookkeeping. `Resp` marks this step as delivering a port response
-\* for request `r`; `NoResp` marks a step that delivers none.
-Resp(r, k) == lastResp' = [rid |-> r, kind |-> k]
-NoResp     == lastResp' = NO_RESP
+\* for request `r`; `NoResp` marks a step that delivers none. `RespFailed`
+\* additionally carries the typed reason, which is what makes
+\* ConnectFailureReasonPreserved statable at all.
+Resp(r, k)         == lastResp' = [rid |-> r, kind |-> k, reason |-> "none"]
+RespFailed(r, why) == lastResp' = [rid |-> r, kind |-> "failed", reason |-> why]
+NoResp             == lastResp' = NO_RESP
 
 --------------------------------------------------------------------------
 (* Type invariant *)
@@ -140,8 +176,9 @@ TypeOK ==
     /\ chain \in CHAINS \cup {NONE}
     /\ hasError \in BOOLEAN
     /\ activeRid \in RIDS \cup {NO_RID}
+    /\ errReason \in ERROR_REASONS
     /\ nextRid \in 1..(MAX_REQUESTS + 1)
-    /\ lastResp \in [rid : RIDS \cup {NO_RID}, kind : RESP_KINDS]
+    /\ lastResp \in [rid : RIDS \cup {NO_RID}, kind : RESP_KINDS, reason : ERROR_REASONS]
 
 (* Connected and WrongChain always carry an address and chain *)
 ConnectedRequiresAddress ==
@@ -179,6 +216,13 @@ ActiveRidWasIssued ==
 ErrorFlagMirrorsState ==
     hasError <=> (state = "Error")
 
+(* B3. The Error state always carries a REASON, and no other state carries
+   one. Before 3.0.0 `Error` carried a bare String, so this invariant could
+   not even be written about the code: the reason existed for one line inside
+   `update` and was then thrown away. *)
+ErrorReasonMirrorsState ==
+    (errReason /= "none") <=> (state = "Error")
+
 (* WrongChain always reports a chain that is not the expected one. *)
 WrongChainIsOffExpected ==
     (state = "WrongChain") => (chain /= EXPECTED_CHAIN)
@@ -207,6 +251,7 @@ Init ==
     /\ chain = NONE
     /\ hasError = FALSE
     /\ activeRid = NO_RID
+    /\ errReason = "none"
     /\ nextRid = 1
     /\ lastResp = NO_RESP
 
@@ -232,6 +277,7 @@ UserConnect ==
             /\ addr' = NONE
             /\ chain' = NONE
             /\ hasError' = FALSE
+            /\ errReason' = "none"
        ELSE UNCHANGED fsm
 
 (* User clicks "Disconnect". In the Elm code this is a port round-trip: the
@@ -247,6 +293,7 @@ UserDisconnect ==
     /\ chain' = NONE
     /\ hasError' = FALSE
     /\ activeRid' = NO_RID
+    /\ errReason' = "none"
     /\ UNCHANGED nextRid
     /\ NoResp
 
@@ -262,6 +309,7 @@ EvtTimeoutConnect(r) ==
             /\ chain' = NONE
             /\ hasError' = FALSE
             /\ activeRid' = NO_RID
+            /\ errReason' = "none"
        ELSE UNCHANGED fsm
 
 --------------------------------------------------------------------------
@@ -280,6 +328,7 @@ EvtConnectedOk(mrid, a, c) ==
             /\ chain' = c
             /\ hasError' = FALSE
             /\ activeRid' = NO_RID
+            /\ errReason' = "none"
 
 (* Same message with a malformed address -> Error. The staleness test runs
    FIRST in the Elm code, so a superseded malformed response is dropped
@@ -294,6 +343,8 @@ EvtConnectedBadAddr(mrid) ==
             /\ chain' = NONE
             /\ hasError' = TRUE
             /\ activeRid' = NO_RID
+            \* Wallet.update: Error (PortFailed (DecodeError ..))
+            /\ errReason' = "decode"
 
 EvtWalletConnected ==
     \E mrid \in IssuedRids \cup {NO_RID} :
@@ -312,6 +363,7 @@ EvtConnectRejected(r) ==
             /\ chain' = NONE
             /\ hasError' = FALSE
             /\ activeRid' = NO_RID
+            /\ errReason' = "none"
        ELSE UNCHANGED fsm
 
 (* `connectPending` -- MetaMask -32002 "already processing
@@ -325,11 +377,16 @@ EvtConnectPending(r) ==
     /\ UNCHANGED fsm
 
 (* `connectFailed` -- not-found / no-accounts / network. Resolves only the
-   attempt it names (Wallet.elm:261-271). The ConnectFailureReason is carried
-   to the app but does not affect the transition, so it is abstracted away. *)
-EvtConnectFailed(r) ==
+   attempt it names. The ConnectFailureReason is no longer abstracted away:
+   `update` now stores it (`Error (ConnectFailed reason message)`), where
+   before 3.0.0 it matched it with `_` and kept only the message string. The
+   reason that arrives is the reason the Error state carries -- that is
+   ConnectFailureReasonPreserved below, and it is the whole content of B3 on
+   this path. *)
+EvtConnectFailed(r, why) ==
     /\ r \in IssuedRids
-    /\ Resp(r, "failed")
+    /\ why \in FAILURE_REASONS
+    /\ RespFailed(r, why)
     /\ UNCHANGED nextRid
     /\ IF state = "Connecting" /\ r = activeRid
        THEN /\ state' = "Error"
@@ -337,6 +394,7 @@ EvtConnectFailed(r) ==
             /\ chain' = NONE
             /\ hasError' = TRUE
             /\ activeRid' = NO_RID
+            /\ errReason' = why
        ELSE UNCHANGED fsm
 
 (* WalletDisconnected -- goes to Disconnected, EXCEPT ReadOnly, which is
@@ -351,6 +409,7 @@ EvtWalletDisconnected ==
             /\ chain' = NONE
             /\ hasError' = FALSE
             /\ activeRid' = NO_RID
+            /\ errReason' = "none"
 
 (* ReadOnlyMode -- rpcUrl configured but no wallet injected. The Elm update
    ignores this event when a live session exists (Connected/WrongChain): a
@@ -367,6 +426,7 @@ EvtReadOnlyMode ==
             /\ chain' = NONE
             /\ hasError' = FALSE
             /\ activeRid' = NO_RID
+            /\ errReason' = "none"
 
 (* ChainChanged -- acts from Connected AND WrongChain (the user can switch
    chains directly in the wallet UI; landing on the expected chain from
@@ -379,7 +439,7 @@ EvtChainChanged(c) ==
     /\ IF state \in {"Connected", "WrongChain"}
        THEN /\ state' = IF c = EXPECTED_CHAIN THEN "Connected" ELSE "WrongChain"
             /\ chain' = c
-            /\ UNCHANGED <<addr, hasError, activeRid>>
+            /\ UNCHANGED <<addr, hasError, activeRid, errReason>>
        ELSE UNCHANGED fsm
 
 (* SwitchChainOk -- the app-initiated switch resolved. Only meaningful in
@@ -392,7 +452,7 @@ EvtSwitchChainOk(c) ==
     /\ UNCHANGED nextRid
     /\ IF state = "WrongChain"
        THEN /\ state' = IF c = EXPECTED_CHAIN THEN "Connected" ELSE "WrongChain"
-            /\ UNCHANGED <<addr, chain, hasError, activeRid>>
+            /\ UNCHANGED <<addr, chain, hasError, activeRid, errReason>>
        ELSE UNCHANGED fsm
 
 (* AccountChanged -- only acts when Connected or WrongChain. ReadOnly and
@@ -403,7 +463,7 @@ EvtAccountChanged(a) ==
     /\ UNCHANGED nextRid
     /\ IF state \in {"Connected", "WrongChain"}
        THEN /\ addr' = a
-            /\ UNCHANGED <<state, chain, hasError, activeRid>>
+            /\ UNCHANGED <<state, chain, hasError, activeRid, errReason>>
        ELSE UNCHANGED fsm
 
 (* WalletError -- goes to Error, EXCEPT ReadOnly stays ReadOnly. This is the
@@ -419,6 +479,10 @@ EvtWalletError ==
             /\ chain' = NONE
             /\ hasError' = TRUE
             /\ activeRid' = NO_RID
+            \* Wallet.update: Error (PortFailed err), where err is the typed
+            \* Web3.Error.Error decoded from the `failed` message -- including
+            \* ChainNotAdded for EIP-1193 4902 after a switchChain.
+            /\ errReason' = "port"
 
 (* WalletsDiscovered, ChainAdded, AssetWatched, GotPermissions -- all no-ops
    on state. *)
@@ -437,7 +501,7 @@ Next ==
     \/ EvtWalletConnected
     \/ \E r \in IssuedRids : EvtConnectRejected(r)
     \/ \E r \in IssuedRids : EvtConnectPending(r)
-    \/ \E r \in IssuedRids : EvtConnectFailed(r)
+    \/ \E r \in IssuedRids, why \in FAILURE_REASONS : EvtConnectFailed(r, why)
     \/ EvtWalletDisconnected
     \/ EvtReadOnlyMode
     \/ \E c \in CHAINS : EvtChainChanged(c)
@@ -527,6 +591,19 @@ ResolutionRequiresActiveRequest ==
 SupersedeUsesFreshId ==
     [][ (state = "Connecting" /\ state' = "Connecting" /\ activeRid' /= activeRid)
         => activeRid' > activeRid ]_vars
+
+(* B3, as a property rather than a convention: when a `connectFailed` names
+   the request that is actually in flight, the machine lands in Error WITH
+   the reason that arrived. Not "an error": THAT error.
+
+   The pre-3.0.0 code satisfies every other property in this file while
+   failing this one, which is the point -- discarding a decoded value is
+   invisible to a spec that never modeled the value. *)
+ConnectFailureReasonPreserved ==
+    [][ (state = "Connecting"
+         /\ lastResp'.kind = "failed"
+         /\ lastResp'.rid = activeRid)
+        => (state' = "Error" /\ errReason' = lastResp'.reason) ]_vars
 
 (* WrongChain can be resolved by SwitchChainOk. *)
 (* NOT CHECKED in the .cfg, deliberately: this property only holds if one

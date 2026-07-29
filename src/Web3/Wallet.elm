@@ -3,6 +3,8 @@ module Web3.Wallet exposing
     , ConnectedInfo
     , RequestId
     , ConnectFailureReason(..)
+    , Failure(..)
+    , failureMessage
     , Msg(..)
     , WalletCmd(..)
     , WalletProvider
@@ -77,7 +79,22 @@ port and present the list to the user; call `selectWallet rdns` when they pick.
 For native balance queries, use `Web3.Balance`. For adding chains, use `addChain` with
 a `ChainConfig` record and follow up with `switchChain`.
 
-@docs State, ConnectedInfo, RequestId, ConnectFailureReason, Msg, WalletCmd, WalletProvider, ChainConfig
+**Failures keep their type.** `Error` carries a [`Failure`](#Failure), not a
+string. A connect that failed still knows WHY it failed
+([`ConnectFailureReason`](#ConnectFailureReason), which the decoder has always
+parsed and `update` used to throw away), and everything arriving on the
+untagged failure channel is a [`Web3.Error.Error`](Web3-Error#Error) -- so
+`4902` is `ChainNotAdded` and the addChain-then-switch retry is writable:
+
+    case model.wallet of
+        Error (PortFailed Web3.Error.ChainNotAdded) ->
+            ( model, web3Cmd (Wallet.encode (Wallet.addChain pulseChainConfig)) )
+
+        Error other ->
+            ( { model | banner = Just (Wallet.failureMessage other) }, Cmd.none )
+
+@docs State, ConnectedInfo, RequestId, ConnectFailureReason, Failure, failureMessage
+@docs Msg, WalletCmd, WalletProvider, ChainConfig
 @docs update, startConnect, timeoutConnect, isConnecting, connectingRequestId
 @docs connect, disconnect, switchChain, selectWallet, addChain
 @docs watchAsset, requestPermissions, getPermissions
@@ -88,6 +105,7 @@ a `ChainConfig` record and follow up with `switchChain`.
 
 import Json.Decode as D
 import Json.Encode as E
+import Web3.Error as Err
 import Web3.Types as T
 
 
@@ -98,7 +116,7 @@ import Web3.Types as T
   - `Connecting` -- wallet connection in progress
   - `Connected` -- wallet connected on the expected chain
   - `WrongChain` -- wallet connected but on the wrong chain
-  - `Error` -- unrecoverable error
+  - `Error` -- unrecoverable error, carrying WHY (see [`Failure`](#Failure))
 
 -}
 type State
@@ -107,7 +125,7 @@ type State
     | Connecting RequestId
     | Connected ConnectedInfo
     | WrongChain ConnectedInfo T.ChainId
-    | Error String
+    | Error Failure
 
 
 {-| Identifies a single connect attempt so a stale response or timeout from a
@@ -128,6 +146,39 @@ type ConnectFailureReason
     = NotFound
     | NoAccounts
     | NetworkError
+
+
+{-| Why the wallet is in [`Error`](#State).
+
+  - `ConnectFailed reason message` -- a `connectFailed` reply for the
+    in-flight attempt. `reason` is the parsed
+    [`ConnectFailureReason`](#ConnectFailureReason); before 3.0.0 `update`
+    decoded it and then discarded it, keeping only `message`, so an app that
+    wanted to say "no wallet extension found" versus "the RPC is down" had to
+    match on the wallet's own English.
+  - `PortFailed err` -- everything on the untagged failure channel, typed as
+    a [`Web3.Error.Error`](Web3-Error#Error). This is where `4902`
+    (`ChainNotAdded`) surfaces after a `switchChain` against a chain the
+    wallet does not have, and where a malformed address from the bridge
+    surfaces as `DecodeError`.
+
+-}
+type Failure
+    = ConnectFailed ConnectFailureReason String
+    | PortFailed Err.Error
+
+
+{-| A one-line rendering of a [`Failure`](#Failure), for a banner. Match on
+the constructors for anything the app should actually DO about it.
+-}
+failureMessage : Failure -> String
+failureMessage failure =
+    case failure of
+        ConnectFailed _ message ->
+            message
+
+        PortFailed err ->
+            Err.toString err
 
 
 {-| The account details of a live wallet connection: the connected `address`
@@ -176,7 +227,7 @@ type Msg
     | WalletDisconnected
     | ChainChanged Int
     | AccountChanged String
-    | WalletError String
+    | WalletError Err.Error
     | WalletsDiscovered (List WalletProvider)
     | ReadOnlyMode
     | ChainAdded
@@ -235,7 +286,7 @@ update expectedChain msg state =
                             WrongChain info expectedChain
 
                     Nothing ->
-                        Error ("Invalid address: " ++ addr)
+                        Error (PortFailed (Err.DecodeError ("Invalid address: " ++ addr)))
 
         WalletConnectRejected rid ->
             case state of
@@ -258,11 +309,16 @@ update expectedChain msg state =
             -- Connecting from the original attempt.
             state
 
-        WalletConnectFailed rid _ errorMessage ->
+        WalletConnectFailed rid reason errorMessage ->
             case state of
                 Connecting activeId ->
                     if rid == activeId then
-                        Error errorMessage
+                        -- The reason was decoded and then dropped on the floor
+                        -- until 3.0.0. It is the difference between "install a
+                        -- wallet", "unlock your wallet" and "your network is
+                        -- down", which is not a distinction to leave to
+                        -- substring matching on someone else's error copy.
+                        Error (ConnectFailed reason errorMessage)
 
                     else
                         state
@@ -339,7 +395,7 @@ update expectedChain msg state =
                     ReadOnly
 
                 _ ->
-                    Error err
+                    Error (PortFailed err)
 
         WalletsDiscovered _ ->
             state
@@ -690,7 +746,7 @@ decoder =
                         D.map AccountChanged (D.field "address" D.string)
 
                     "failed" ->
-                        D.map WalletError (D.field "error" D.string)
+                        D.map WalletError Err.decoder
 
                     "walletsDiscovered" ->
                         D.map WalletsDiscovered

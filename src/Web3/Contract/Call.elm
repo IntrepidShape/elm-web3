@@ -158,6 +158,19 @@ withFrom addr (ReadCall call) =
 
 
 {-| Encode a read call for the JS port.
+
+    encode myReadCall
+    -- sends { tag: "call", id: ..., contract: ..., block: ..., method: ..., args: ... }
+    -- raw-calldata reads send { tag: "call", id: ..., contract: ..., data: ... }
+    -- JS replies with { tag: "callResult", id: ..., data: "0x..." }, whose
+    -- `data` field is what `responseDecoder` reads.
+
+A failure replies on the shared failure channel instead --
+`{ tag: "failed", error, code, revertData }` -- which
+[`Web3.Error.decoder`](Web3-Error#decoder) turns into a typed
+[`Web3.Error.Error`](Web3-Error#Error), so a reverted simulation is
+distinguishable from a dead RPC without matching on English.
+
 -}
 encode : ReadCall a -> E.Value
 encode (ReadCall call) =

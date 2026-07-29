@@ -350,7 +350,7 @@ viewWallet model =
 
             Wallet.Error err ->
                 div []
-                    [ p [] [ text ("Wallet error: " ++ err) ]
+                    [ p [] [ text ("Wallet error: " ++ Wallet.failureMessage err) ]
                     , button [ onClick ConnectWallet ] [ text "Try Again" ]
                     ]
         ]
@@ -450,20 +450,20 @@ viewTxStatus status =
                 ]
 
         Tx.Confirmed receipt ->
+            -- Confirmed now means succeeded. The library used to route a
+            -- mined-but-reverted transaction here too, leaving every consumer
+            -- to remember to check receipt.status -- which this example did,
+            -- and which is exactly the check people forget.
             div []
                 [ p [] [ text ("Confirmed in block " ++ String.fromInt receipt.blockNumber) ]
                 , p [] [ text ("Gas used: " ++ receipt.gasUsed) ]
-                , p []
-                    [ text
-                        ("Status: "
-                            ++ (if receipt.status then
-                                    "success"
+                , p [] [ text ("Tx: " ++ T.txHashToString receipt.txHash) ]
+                ]
 
-                                else
-                                    "reverted"
-                               )
-                        )
-                    ]
+        Tx.RevertedOnChain receipt ->
+            div [ style "color" "red" ]
+                [ p [] [ text ("Reverted on chain in block " ++ String.fromInt receipt.blockNumber) ]
+                , p [] [ text ("Gas used: " ++ receipt.gasUsed) ]
                 , p [] [ text ("Tx: " ++ T.txHashToString receipt.txHash) ]
                 ]
 

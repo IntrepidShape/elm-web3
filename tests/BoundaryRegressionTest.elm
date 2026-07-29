@@ -172,6 +172,17 @@ suite =
                         |> Maybe.map B.toString
                         |> Expect.equal (Just "1500000000000000000")
             ]
+        , describe "doc/code drift -- the decodeRevertReason example must be real"
+            [ test "the module doc vector decodes to the string it claims" <|
+                \_ ->
+                    -- The shipped example encoded length 0x11 (17) for an
+                    -- 18-byte string, so it actually returned
+                    -- "Insufficient fund". A doc example is a claim; this
+                    -- pins it.
+                    D.decodeRevertReason
+                        "0x08c379a000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000012496e73756666696369656e742066756e64730000000000000000000000000000"
+                        |> Expect.equal (Just "Insufficient funds")
+            ]
         , describe "A7 -- fromInt must not silently corrupt past 2^53"
             [ test "a value beyond Number.MAX_SAFE_INTEGER is not silently wrong" <|
                 \_ ->

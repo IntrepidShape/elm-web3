@@ -67,6 +67,7 @@ receiptJsonFuzzer :
         , blockNumber : Int
         , gasUsed : String
         , status : Bool
+        , contractAddress : Maybe String
         , logs : List { address : String, topics : List String, data : String, blockNumber : Int, logIndex : Int }
         }
 receiptJsonFuzzer =
@@ -76,6 +77,7 @@ receiptJsonFuzzer =
             , blockNumber = blk
             , gasUsed = "21000"
             , status = ok
+            , contractAddress = Nothing
             , logs = []
             }
         )
@@ -89,11 +91,11 @@ receiptJsonFuzzer =
 msgFuzzer : Fuzzer Tx.Msg
 msgFuzzer =
     Fuzz.oneOf
-        [ Fuzz.map Tx.TxSubmitted txHashStringFuzzer
-        , Fuzz.map2 Tx.TxConfirmation txHashStringFuzzer (Fuzz.intRange 1 100)
-        , Fuzz.map Tx.TxConfirmed receiptJsonFuzzer
-        , Fuzz.map Tx.TxFailed Fuzz.string
-        , Fuzz.constant Tx.TxRejected
+        [ Fuzz.map (Tx.TxSubmitted Nothing) txHashStringFuzzer
+        , Fuzz.map2 (Tx.TxConfirmation Nothing) txHashStringFuzzer (Fuzz.intRange 1 100)
+        , Fuzz.map (Tx.TxConfirmed Nothing) receiptJsonFuzzer
+        , Fuzz.map (Tx.TxFailed Nothing) Fuzz.string
+        , Fuzz.constant (Tx.TxRejected Nothing)
         , Fuzz.constant Tx.TxReset
         , Fuzz.map Tx.TxReceiptNotFound Fuzz.string
         ]
@@ -105,10 +107,10 @@ Used to test that only TxSubmitted can produce Submitted state.
 nonSubmittedMsgFuzzer : Fuzzer Tx.Msg
 nonSubmittedMsgFuzzer =
     Fuzz.oneOf
-        [ Fuzz.map2 Tx.TxConfirmation txHashStringFuzzer (Fuzz.intRange 1 100)
-        , Fuzz.map Tx.TxConfirmed receiptJsonFuzzer
-        , Fuzz.map Tx.TxFailed Fuzz.string
-        , Fuzz.constant Tx.TxRejected
+        [ Fuzz.map2 (Tx.TxConfirmation Nothing) txHashStringFuzzer (Fuzz.intRange 1 100)
+        , Fuzz.map (Tx.TxConfirmed Nothing) receiptJsonFuzzer
+        , Fuzz.map (Tx.TxFailed Nothing) Fuzz.string
+        , Fuzz.constant (Tx.TxRejected Nothing)
         , Fuzz.constant Tx.TxReset
         , Fuzz.map Tx.TxReceiptNotFound Fuzz.string
         ]
@@ -125,20 +127,20 @@ initialStateFuzzer =
         , Fuzz.constant Tx.Rejected
         , -- Failed (reached via TxFailed from AwaitingSignature)
           Fuzz.map
-            (\err -> Tx.update (Tx.TxFailed err) Tx.AwaitingSignature)
+            (\err -> Tx.update (Tx.TxFailed Nothing err) Tx.AwaitingSignature)
             Fuzz.string
         , -- Submitted (reached via AwaitingSignature → TxSubmitted)
           Fuzz.map
-            (\hash -> Tx.update (Tx.TxSubmitted hash) Tx.AwaitingSignature)
+            (\hash -> Tx.update (Tx.TxSubmitted Nothing hash) Tx.AwaitingSignature)
             validTxHashStringFuzzer
         , -- Confirming (reached via AwaitingSignature → Submitted → TxConfirmation)
           Fuzz.map2
             (\hash count ->
                 let
                     submitted =
-                        Tx.update (Tx.TxSubmitted hash) Tx.AwaitingSignature
+                        Tx.update (Tx.TxSubmitted Nothing hash) Tx.AwaitingSignature
                 in
-                Tx.update (Tx.TxConfirmation hash count) submitted
+                Tx.update (Tx.TxConfirmation Nothing hash count) submitted
             )
             validTxHashStringFuzzer
             (Fuzz.intRange 1 100)
@@ -147,17 +149,18 @@ initialStateFuzzer =
             (\hash ->
                 let
                     submitted =
-                        Tx.update (Tx.TxSubmitted hash) Tx.AwaitingSignature
+                        Tx.update (Tx.TxSubmitted Nothing hash) Tx.AwaitingSignature
 
                     confirming =
-                        Tx.update (Tx.TxConfirmation hash 1) submitted
+                        Tx.update (Tx.TxConfirmation Nothing hash 1) submitted
                 in
                 Tx.update
-                    (Tx.TxConfirmed
+                    (Tx.TxConfirmed Nothing
                         { txHash = hash
                         , blockNumber = 100
                         , gasUsed = "21000"
                         , status = True
+                        , contractAddress = Nothing
                         , logs = []
                         }
                     )
@@ -193,6 +196,9 @@ statusTag status =
 
         Tx.Confirmed _ ->
             "Confirmed"
+
+        Tx.RevertedOnChain _ ->
+            "RevertedOnChain"
 
         Tx.Failed msg ->
             "Failed(" ++ msg ++ ")"
@@ -232,7 +238,7 @@ suite =
 
 
 {-| update is total — any sequence of messages from any initial state always
-produces one of the seven known Status variants without runtime error.
+produces one of the eight known Status variants without runtime error.
 -}
 neverCrashesTest : Test
 neverCrashesTest =
@@ -256,6 +262,9 @@ neverCrashesTest =
                     Expect.pass
 
                 Tx.Confirmed _ ->
+                    Expect.pass
+
+                Tx.RevertedOnChain _ ->
                     Expect.pass
 
                 Tx.Failed _ ->
@@ -424,7 +433,7 @@ txRejectedAlwaysRejectsTest =
                     applyMsgs msgs initState
 
                 afterReject =
-                    Tx.update Tx.TxRejected anyState
+                    Tx.update (Tx.TxRejected Nothing) anyState
             in
             case anyState of
                 Tx.AwaitingSignature ->
@@ -469,7 +478,7 @@ txFailedAlwaysFailsTest =
                     applyMsgs msgs initState
 
                 afterFail =
-                    Tx.update (Tx.TxFailed errMsg) anyState
+                    Tx.update (Tx.TxFailed Nothing errMsg) anyState
             in
             if Tx.isTerminal anyState then
                 -- Terminal states are guarded — TxFailed has no effect
@@ -541,11 +550,11 @@ monotonicConfirmationsTest =
 hostileMsgFuzzer : Fuzzer Tx.Msg
 hostileMsgFuzzer =
     Fuzz.oneOf
-        [ Fuzz.map Tx.TxSubmitted txHashStringFuzzer
-        , Fuzz.map2 Tx.TxConfirmation txHashStringFuzzer (Fuzz.intRange -5 100)
-        , Fuzz.map Tx.TxConfirmed receiptJsonFuzzer
-        , Fuzz.map Tx.TxFailed Fuzz.string
-        , Fuzz.constant Tx.TxRejected
+        [ Fuzz.map (Tx.TxSubmitted Nothing) txHashStringFuzzer
+        , Fuzz.map2 (Tx.TxConfirmation Nothing) txHashStringFuzzer (Fuzz.intRange -5 100)
+        , Fuzz.map (Tx.TxConfirmed Nothing) receiptJsonFuzzer
+        , Fuzz.map (Tx.TxFailed Nothing) Fuzz.string
+        , Fuzz.constant (Tx.TxRejected Nothing)
         , Fuzz.constant Tx.TxReset
         , Fuzz.map Tx.TxReceiptNotFound Fuzz.string
         ]

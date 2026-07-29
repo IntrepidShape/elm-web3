@@ -4,6 +4,7 @@ import Expect
 import Json.Decode as D
 import Test exposing (..)
 import Web3.Types as T
+import Web3.Error as Err
 import Web3.Wallet as Wallet
 
 
@@ -78,7 +79,7 @@ requestIdTests =
         , test "WalletConnectFailed with a matching requestId -> Error with the message" <|
             \_ ->
                 Wallet.update pulseChain (Wallet.WalletConnectFailed 1 Wallet.NetworkError "boom") (Wallet.Connecting 1)
-                    |> Expect.equal (Wallet.Error "boom")
+                    |> Expect.equal (Wallet.Error (Wallet.ConnectFailed Wallet.NetworkError "boom"))
         , test "WalletConnectFailed with a stale requestId is dropped (stays Connecting)" <|
             \_ ->
                 Wallet.update pulseChain (Wallet.WalletConnectFailed 1 Wallet.NetworkError "boom") (Wallet.Connecting 2)
@@ -284,7 +285,7 @@ stateTransitionTests =
                     |> Expect.equal Wallet.Disconnected
         , test "any state + WalletError -> Error" <|
             \_ ->
-                Wallet.update pulseChain (Wallet.WalletError "rejected") (Wallet.Connecting 1)
+                Wallet.update pulseChain (Wallet.WalletError (Err.NetworkError "rejected")) (Wallet.Connecting 1)
                     |> (\s ->
                             case s of
                                 Wallet.Error _ ->
@@ -304,7 +305,7 @@ stateTransitionTests =
                     |> Expect.equal Wallet.ReadOnly
         , test "Error + WalletDisconnected -> Disconnected (recovery)" <|
             \_ ->
-                Wallet.update pulseChain Wallet.WalletDisconnected (Wallet.Error "something went wrong")
+                Wallet.update pulseChain Wallet.WalletDisconnected (Wallet.Error (Wallet.PortFailed (Err.NetworkError "something went wrong")))
                     |> Expect.equal Wallet.Disconnected
         , test "SwitchChainOk on expected chain from WrongChain -> Connected" <|
             \_ ->
@@ -347,7 +348,7 @@ stateTransitionTests =
                     |> Expect.equal (Wallet.Connecting 1)
         , test "startConnect from Error -> Connecting" <|
             \_ ->
-                Wallet.startConnect 1 (Wallet.Error "oops")
+                Wallet.startConnect 1 (Wallet.Error (Wallet.PortFailed (Err.NetworkError "oops")))
                     |> Expect.equal (Wallet.Connecting 1)
         , test "startConnect from Connected -> no-op" <|
             \_ ->
@@ -520,7 +521,7 @@ decoderTests =
             \_ ->
                 """{"tag":"failed","error":"connection dropped"}"""
                     |> D.decodeString Wallet.decoder
-                    |> Expect.equal (Ok (Wallet.WalletError "connection dropped"))
+                    |> Expect.equal (Ok (Wallet.WalletError (Err.NetworkError "connection dropped")))
         , test "unknown tag 'error' is now rejected (use 'failed')" <|
             \_ ->
                 """{"tag":"error","error":"user rejected"}"""

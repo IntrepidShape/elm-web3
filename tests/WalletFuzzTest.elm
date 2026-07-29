@@ -16,6 +16,7 @@ Properties verified:
 import Expect
 import Fuzz exposing (Fuzzer)
 import Test exposing (..)
+import Web3.Error as Err
 import Web3.Types as T
 import Web3.Wallet as Wallet
 
@@ -89,6 +90,21 @@ requestIdFuzzer =
     Fuzz.intRange 0 5
 
 
+{-| Generate any Web3.Error.Error, so the untagged failure channel is fuzzed
+over the whole taxonomy rather than one hand-picked constructor.
+-}
+portErrorFuzzer : Fuzzer Err.Error
+portErrorFuzzer =
+    Fuzz.oneOf
+        [ Fuzz.constant Err.UserRejected
+        , Fuzz.constant Err.RequestPending
+        , Fuzz.constant Err.ChainNotAdded
+        , Fuzz.map2 Err.RpcError (Fuzz.intRange -32100 5000) Fuzz.string
+        , Fuzz.map Err.NetworkError Fuzz.string
+        , Fuzz.map Err.DecodeError Fuzz.string
+        ]
+
+
 connectFailureReasonFuzzer : Fuzzer Wallet.ConnectFailureReason
 connectFailureReasonFuzzer =
     Fuzz.oneOf
@@ -110,7 +126,7 @@ msgFuzzer =
         , Fuzz.constant Wallet.WalletDisconnected
         , Fuzz.map Wallet.ChainChanged chainIdIntFuzzer
         , Fuzz.map Wallet.AccountChanged addressStringFuzzer
-        , Fuzz.map Wallet.WalletError Fuzz.string
+        , Fuzz.map Wallet.WalletError portErrorFuzzer
         , Fuzz.constant (Wallet.WalletsDiscovered [])
         , Fuzz.map Wallet.SwitchChainOk chainIdIntFuzzer
         ]
@@ -124,7 +140,7 @@ initialStateFuzzer =
     Fuzz.oneOf
         [ Fuzz.constant Wallet.Disconnected
         , Fuzz.map Wallet.Connecting requestIdFuzzer
-        , Fuzz.map Wallet.Error Fuzz.string
+        , Fuzz.map (\err -> Wallet.Error (Wallet.PortFailed err)) portErrorFuzzer
         , -- Connected on expected chain
           Fuzz.map
             (\addr ->
@@ -167,8 +183,8 @@ stateTag state =
         Wallet.WrongChain _ _ ->
             "WrongChain"
 
-        Wallet.Error msg ->
-            "Error(" ++ msg ++ ")"
+        Wallet.Error failure ->
+            "Error(" ++ Wallet.failureMessage failure ++ ")"
 
 
 
@@ -266,14 +282,14 @@ ReadOnly mode ignores WalletError to stay read-accessible.
 -}
 errorReachableTest : Test
 errorReachableTest =
-    fuzz3 initialStateFuzzer (Fuzz.list msgFuzzer) Fuzz.string "WalletError leads to Error or stays ReadOnly" <|
-        \initState msgs errMsg ->
+    fuzz3 initialStateFuzzer (Fuzz.list msgFuzzer) portErrorFuzzer "WalletError leads to Error or stays ReadOnly" <|
+        \initState msgs portErr ->
             let
                 anyState =
                     applyMsgs msgs initState
 
                 afterError =
-                    Wallet.update expectedChain (Wallet.WalletError errMsg) anyState
+                    Wallet.update expectedChain (Wallet.WalletError portErr) anyState
             in
             case anyState of
                 Wallet.ReadOnly ->
@@ -356,11 +372,11 @@ addressRoundTripTest =
 -}
 errorRecoverableTest : Test
 errorRecoverableTest =
-    fuzz Fuzz.string "Error state is always recoverable via WalletDisconnected" <|
-        \errMsg ->
+    fuzz portErrorFuzzer "Error state is always recoverable via WalletDisconnected" <|
+        \portErr ->
             let
                 errState =
-                    Wallet.Error errMsg
+                    Wallet.Error (Wallet.PortFailed portErr)
 
                 afterDisconnect =
                     Wallet.update expectedChain Wallet.WalletDisconnected errState

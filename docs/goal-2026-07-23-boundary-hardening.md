@@ -146,9 +146,15 @@ gives `-1` where Elm's `modBy` gives `2`. Rename or correct the sign.
 Split `Confirmed Receipt | RevertedOnChain Receipt`; update `isTerminal`,
 `Ui.Transaction.statusBadge`, and the module doc example at `Transaction.elm:34`
 which currently renders a revert as success.
-**Landing note:** this makes `examples/basic`'s `viewTxStatus` non-exhaustive,
-and it ripples into `elm-web3-ui`. Land it WITH the ui change and the example
-branch, not before. Track C's new build-every-example CI step means it cannot
+**Landing note:** this makes `examples/basic`'s `viewTxStatus` non-exhaustive
+and ripples into `elm-web3-ui` -- but it CANNOT land as one atomic change, and
+this is a structural constraint, not a preference. `elm-web3-ui` is a *package*,
+so it has no `source-directories` and resolves `intrepidshape/elm-web3` from the
+registry. It literally cannot see an unpublished constructor. The forced order
+is: fix the examples and the (application-type) consumer apps, publish elm-web3
+first, then widen the ui dependency range, then fix ui, then publish ui.
+Corrected 2026-07-23 after ui compiled green against a Status type that had
+gained a constructor -- the catch-alls in `Ui/Transaction.elm` hid it too. Track C's new build-every-example CI step means it cannot
 ship silently -- that is the intended safety net, not an obstacle to route
 around.
 

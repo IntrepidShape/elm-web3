@@ -1,5 +1,100 @@
 # Changelog
 
+## 3.0.0 — 2026-07-29
+
+MAJOR. Three changes to exposed types, one module removal, one new module.
+Every one is a correctness fix; none is a feature.
+
+### Fixed — the bridge could never report a failure
+
+`_decodeRevertReason` was called in the shim's failure path and referenced in a
+comment, but **defined nowhere in the file**. Every non-rejection error threw
+`ReferenceError` inside its own catch block, so no `failed` message ever
+reached Elm: a reverted transaction sat in `Confirming` forever with nothing
+surfaced to the user. It was the single `TS2304` in the repo's own tsc output,
+and no gate ran tsc. Now implemented for `Error(string)` and `Panic(uint256)`.
+
+### Fixed — raw calldata was ignored
+
+`call`, `estimateGas` and `send` hardcoded `data: encodeCall(method, args)`,
+so `readCallRaw`/`writeCallRaw`/`payableCallRaw` — the documented pure-Elm
+path — sent `encodeCall("", [])`, the selector of the empty string, to the
+contract. Silently. `cmd.data` is now used verbatim when present, and
+`estimateGas` honours `from` so an estimate is taken as the sending account.
+
+### Changed — mined-and-reverted is no longer called `Confirmed` (BREAKING)
+
+`Status` gains **`RevertedOnChain Receipt`**. Previously a mined-but-reverted
+transaction became `Confirmed`, and the module's own doc example rendered it
+as success; every consumer had to remember to check `receipt.status`. The type
+now says it. `Receipt` also gains `contractAddress : Maybe Address`, so a
+deployment can finally recover its own address.
+
+**Migration:** add a `RevertedOnChain` branch wherever you match on `Status`.
+If you were checking `receipt.status` by hand inside your `Confirmed` branch,
+delete that check — `Confirmed` now means succeeded.
+
+### Added — one canonical error type (BREAKING)
+
+New module **`Web3.Error`**: `UserRejected | RequestPending | ChainNotAdded |
+RpcError Int String | Reverted {reason,data} | Panic Int | DecodeError String
+| NetworkError String`. The shim now forwards `err.code`, including the nested
+shapes several wallets use, so `4902` (chain-not-added) is detectable and the
+standard switchChain-then-addChain retry is finally implementable; `-32002` no
+longer vanishes outside connect.
+
+`Wallet.State.Error` now carries a typed `Failure` instead of a `String`, so
+the `ConnectFailureReason` the library already decoded is no longer discarded.
+`Wallet.Msg.WalletError` carries `Web3.Error.Error`.
+
+**Migration:** `Wallet.failureMessage` recovers the human-readable string if
+that is all you need.
+
+### Added — correlation ids on the write path (BREAKING)
+
+`Send.withId`, and every write-path reply carries `Maybe TxId`, so two
+in-flight transactions are finally distinguishable. `Transaction.Msg`
+constructors re-arity accordingly; `Transaction.msgId` routes.
+
+### Removed — `Contract.Event`'s subscribe half (BREAKING)
+
+`EventFilter`, `watchEvent`, `encode` and `decoder` are gone.
+`Web3.Subscription` is now the sole owner of the `watchEvent` wire format.
+
+This was not a working feature being retired. `Contract.Event.watchEvent` sent
+no subscription id and put the address under a `contract` key the shim never
+reads, so it issued `eth_subscribe(['logs', {address: undefined}])` — **a
+subscription to every log on the chain**. Its `logDecoder` then read a
+`contract` field the shim never sends, so it could not have decoded a result
+either. Its `event : String` field was inert on both sides; nothing hashed it
+into a topic. Even the module's headline doc example never type-checked: it
+passed `filter = []` to a record whose field is `topics`.
+
+`getLogs`, `logsDecoder`, `EventLog` and `GetLogsQuery` are unchanged and stay
+— that half works, and is the only Elm emitter of the shim's `getLogs`
+handler.
+
+**Migration:** use `Web3.Subscription` (`open`/`close`, with a `LogFilter`
+builder) for live events. It has always spoken the correct wire format.
+
+### Verification
+
+- `scripts/check-port-parity.ts` compares every Elm-emitted tag against the
+  shim's handlers and the `.d.ts`, in both directions, and its `--self-test`
+  proves it detects an injected drift of each class rather than being trusted
+  on faith. This is the detector that would have caught the two bugs above on
+  the day they shipped.
+- CI rebuilds the shim and fails if the committed artifact differs from its
+  source, so a stale bundle cannot ship again.
+- `WalletSpec` and `TransactionSpec` were extended and their new invariants
+  proven non-vacuous by model-checking mutants first: asserting the pre-3.0.0
+  behaviour (a reverted receipt becoming `Confirmed`) violates
+  `ConfirmedMeansSuccess` with a four-state counterexample.
+- The `decodeRevertReason` doc example encoded length `0x11` for an 18-byte
+  string, so it returned `"Insufficient fund"` rather than the
+  `"Insufficient funds"` it claimed. Corrected and pinned by a test.
+
+
 ## 2.1.0 — 2026-07-23
 
 > **Read this section even though the version bump is MINOR.** `elm diff`

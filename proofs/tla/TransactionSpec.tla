@@ -6,12 +6,13 @@
  * transaction lifecycle from user-initiated send through confirmation.
  *
  * States:  Idle, AwaitingSignature, Submitted, Confirming, Confirmed,
- *          Failed, Rejected
+ *          RevertedOnChain, Failed, Rejected
  *
  * Messages (from JS port):
  *   TxSubmitted hash       -> Submitted hash
  *   TxConfirmation hash n  -> Confirming hash n
- *   TxConfirmed receipt    -> Confirmed receipt
+ *   TxConfirmed receipt    -> Confirmed receipt        (receipt.status TRUE)
+ *                          -> RevertedOnChain receipt  (receipt.status FALSE)
  *   TxFailed err           -> Failed err
  *   TxRejected             -> Rejected
  *
@@ -23,7 +24,9 @@
  *                    (invalid hash -> Failed)
  *   - TxConfirmation only accepted from Submitted or Confirming, count must
  *                    strictly increase (stale/lower counts dropped)
- *   - TxConfirmed    only accepted from Submitted or Confirming
+ *   - TxConfirmed    only accepted from Submitted or Confirming; splits on
+ *                    the receipt's own status flag into Confirmed (mined and
+ *                    successful) or RevertedOnChain (mined and reverted)
  *                    (invalid receipt hash -> Failed)
  *   - TxFailed       accepted from any non-terminal state, INCLUDING Idle
  *   - TxRejected     from AwaitingSignature -> Rejected;
@@ -39,6 +42,13 @@
  *   TypeOK                 — variables are well-typed
  *   TerminalIsTerminal     — no port message moves a terminal state; the only
  *                            exit is the explicit TxReset to Idle
+ *   ConfirmedMeansSuccess  — Confirmed is only ever reached from a receipt
+ *                            whose status flag was TRUE. Until 3.0.0 the Elm
+ *                            update ignored receipt.status entirely, so a
+ *                            mined-and-reverted transaction landed in
+ *                            Confirmed and every UI rendered it as success.
+ *   RevertedMeansReverted  — and the converse: RevertedOnChain is only ever
+ *                            reached from a receipt whose status was FALSE
  *   SubmittedNeedsSignature — Submitted only reachable from AwaitingSignature
  *   ConfirmingHasHash      — Confirming state always carries a valid hash
  * Properties (temporal/action):
@@ -61,19 +71,24 @@ VARIABLES
     state,                \* Current state tag
     txHash,               \* Current tx hash (or NONE)
     confirmCount,         \* Current confirmation count (0 when not confirming)
-    prevState             \* Previous state tag (for transition invariants)
+    prevState,            \* Previous state tag (for transition invariants)
+    receiptStatus         \* Status flag of the receipt that produced the
+                          \* current terminal state: "success", "reverted",
+                          \* or "none" when no receipt is in play
 
 NONE == "NONE"
 
-vars == <<state, txHash, confirmCount, prevState>>
+vars == <<state, txHash, confirmCount, prevState, receiptStatus>>
 
 --------------------------------------------------------------------------
 (* State sets *)
 
 StateSet == {"Idle", "AwaitingSignature", "Submitted", "Confirming",
-             "Confirmed", "Failed", "Rejected"}
+             "Confirmed", "RevertedOnChain", "Failed", "Rejected"}
 
-TerminalStates == {"Confirmed", "Failed", "Rejected"}
+TerminalStates == {"Confirmed", "RevertedOnChain", "Failed", "Rejected"}
+
+ReceiptStatuses == {"none", "success", "reverted"}
 
 PendingStates == {"AwaitingSignature", "Submitted", "Confirming"}
 
@@ -85,6 +100,7 @@ TypeOK ==
     /\ txHash \in TX_HASHES \cup {NONE}
     /\ confirmCount \in 0..MAX_CONFIRMATIONS
     /\ prevState \in StateSet
+    /\ receiptStatus \in ReceiptStatuses
 
 --------------------------------------------------------------------------
 (* Safety invariants *)
@@ -106,9 +122,28 @@ SubmittedNeedsSignature ==
 (* Whenever in Confirming or Submitted or Confirmed state,
    we must have a valid hash. *)
 ConfirmingHasHash ==
-    /\ (state = "Confirming") => txHash \in TX_HASHES
-    /\ (state = "Submitted")  => txHash \in TX_HASHES
-    /\ (state = "Confirmed")  => txHash \in TX_HASHES
+    /\ (state = "Confirming")       => txHash \in TX_HASHES
+    /\ (state = "Submitted")        => txHash \in TX_HASHES
+    /\ (state = "Confirmed")        => txHash \in TX_HASHES
+    /\ (state = "RevertedOnChain")  => txHash \in TX_HASHES
+
+(* A9. Confirmed is reserved for a receipt that reported success. A receipt
+   with status = FALSE was mined -- it cost the user gas and it is on chain
+   forever -- and it did nothing. It gets its own terminal state so that no
+   view can render it as success by accident, which is exactly what the Elm
+   code did before 3.0.0: confirmReceipt built Confirmed unconditionally and
+   the module's own doc example showed `Confirmed receipt -> viewSuccess`.
+
+   Non-vacuity: mutating GuardedTxConfirmedReverted to set state' =
+   "Confirmed" (i.e. restoring the pre-3.0.0 behaviour) makes TLC report this
+   invariant violated in a two-step trace. *)
+ConfirmedMeansSuccess ==
+    (state = "Confirmed") => receiptStatus = "success"
+
+(* The converse, so the split cannot be satisfied by simply never reaching
+   the new state. *)
+RevertedMeansReverted ==
+    (state = "RevertedOnChain") => receiptStatus = "reverted"
 
 (* Confirmation count strictly increases while Confirming — an ACTION property
    (mentions primed variables), so it lives under PROPERTIES in the .cfg, not
@@ -128,6 +163,7 @@ Init ==
     /\ txHash = NONE
     /\ confirmCount = 0
     /\ prevState = "Idle"
+    /\ receiptStatus = "none"
 
 --------------------------------------------------------------------------
 (* User action: initiate a send (transitions Idle -> AwaitingSignature) *)
@@ -138,6 +174,7 @@ UserSend ==
     /\ txHash' = NONE
     /\ confirmCount' = 0
     /\ prevState' = state
+    /\ receiptStatus' = "none"
 
 (* User action: TxReset — from ANY terminal state (including Confirmed) back
    to Idle. Mirrors Web3.Transaction.update TxReset, which resets whenever
@@ -148,6 +185,7 @@ UserRetry ==
     /\ txHash' = NONE
     /\ confirmCount' = 0
     /\ prevState' = state
+    /\ receiptStatus' = "none"
 
 --------------------------------------------------------------------------
 (* =====================================================================
@@ -164,6 +202,7 @@ GuardedTxSubmitted(h) ==
     /\ txHash' = h
     /\ confirmCount' = 0
     /\ prevState' = state
+    /\ receiptStatus' = "none"
 
 (* TxConfirmation: a new confirmation arrived.
    Only valid from Submitted or Confirming, and count must increase. *)
@@ -176,16 +215,31 @@ GuardedTxConfirmation(h, n) ==
     /\ txHash' = h
     /\ confirmCount' = n
     /\ prevState' = state
+    /\ receiptStatus' = "none"
 
-(* TxConfirmed: transaction fully confirmed with receipt.
+(* TxConfirmed with a receipt reporting SUCCESS (receipt.status = TRUE).
    Only valid from Submitted or Confirming. *)
-GuardedTxConfirmed(h) ==
+GuardedTxConfirmedSuccess(h) ==
     /\ state \in {"Submitted", "Confirming"}
     /\ h \in TX_HASHES
     /\ state' = "Confirmed"
     /\ txHash' = h
     /\ confirmCount' = confirmCount
     /\ prevState' = state
+    /\ receiptStatus' = "success"
+
+(* TxConfirmed with a receipt reporting a REVERT (receipt.status = FALSE).
+   Mined, paid for, and it did nothing -- a separate terminal state, never
+   Confirmed. This is the A9 split; before it, the two actions below were one
+   action and the receipt's status flag was not read at all. *)
+GuardedTxConfirmedReverted(h) ==
+    /\ state \in {"Submitted", "Confirming"}
+    /\ h \in TX_HASHES
+    /\ state' = "RevertedOnChain"
+    /\ txHash' = h
+    /\ confirmCount' = confirmCount
+    /\ prevState' = state
+    /\ receiptStatus' = "reverted"
 
 (* TxFailed: transaction failed (revert, out of gas, etc).
    The Elm update accepts TxFailed from ANY non-terminal state — including
@@ -197,6 +251,7 @@ GuardedTxFailed ==
     /\ txHash' = txHash       \* preserve hash if we had one
     /\ confirmCount' = 0
     /\ prevState' = state
+    /\ receiptStatus' = "none"
 
 (* TxRejected: user rejected in the wallet.
    From AwaitingSignature -> Rejected.
@@ -208,6 +263,7 @@ GuardedTxRejected ==
     /\ txHash' = NONE
     /\ confirmCount' = 0
     /\ prevState' = state
+    /\ receiptStatus' = "none"
 
 GuardedTxRejectedLate ==
     /\ state \in {"Submitted", "Confirming"}
@@ -215,6 +271,7 @@ GuardedTxRejectedLate ==
     /\ txHash' = txHash
     /\ confirmCount' = 0
     /\ prevState' = state
+    /\ receiptStatus' = "none"
 
 (* TxSubmitted with invalid hash -> Failed *)
 GuardedTxSubmittedInvalid ==
@@ -223,6 +280,7 @@ GuardedTxSubmittedInvalid ==
     /\ txHash' = NONE
     /\ confirmCount' = 0
     /\ prevState' = state
+    /\ receiptStatus' = "none"
 
 (* TxConfirmed with an invalid receipt hash -> Failed
    (Web3.Transaction.confirmReceipt Nothing branch). *)
@@ -232,6 +290,7 @@ GuardedTxConfirmedInvalid ==
     /\ txHash' = txHash
     /\ confirmCount' = 0
     /\ prevState' = state
+    /\ receiptStatus' = "none"
 
 --------------------------------------------------------------------------
 (* Guarded next-state relation *)
@@ -241,7 +300,8 @@ GuardedNext ==
     \/ UserRetry
     \/ \E h \in TX_HASHES :
         \/ GuardedTxSubmitted(h)
-        \/ GuardedTxConfirmed(h)
+        \/ GuardedTxConfirmedSuccess(h)
+        \/ GuardedTxConfirmedReverted(h)
         \/ \E n \in 1..MAX_CONFIRMATIONS : GuardedTxConfirmation(h, n)
     \/ GuardedTxFailed
     \/ GuardedTxRejected
@@ -264,6 +324,7 @@ UnguardedTxSubmitted(h) ==
     /\ txHash' = h
     /\ confirmCount' = 0
     /\ prevState' = state
+    /\ receiptStatus' = "none"
 
 (* TxConfirmation: any state -> Confirming (no monotonicity guard) *)
 UnguardedTxConfirmation(h, n) ==
@@ -273,14 +334,25 @@ UnguardedTxConfirmation(h, n) ==
     /\ txHash' = h
     /\ confirmCount' = n
     /\ prevState' = state
+    /\ receiptStatus' = "none"
 
-(* TxConfirmed: any state -> Confirmed *)
-UnguardedTxConfirmed(h) ==
+(* TxConfirmed: any state -> Confirmed / RevertedOnChain, split on the
+   receipt's status flag the same way the guarded actions do. *)
+UnguardedTxConfirmedSuccess(h) ==
     /\ h \in TX_HASHES
     /\ state' = "Confirmed"
     /\ txHash' = h
     /\ confirmCount' = confirmCount
     /\ prevState' = state
+    /\ receiptStatus' = "success"
+
+UnguardedTxConfirmedReverted(h) ==
+    /\ h \in TX_HASHES
+    /\ state' = "RevertedOnChain"
+    /\ txHash' = h
+    /\ confirmCount' = confirmCount
+    /\ prevState' = state
+    /\ receiptStatus' = "reverted"
 
 (* TxFailed: any state -> Failed *)
 UnguardedTxFailed ==
@@ -288,6 +360,7 @@ UnguardedTxFailed ==
     /\ txHash' = NONE
     /\ confirmCount' = 0
     /\ prevState' = state
+    /\ receiptStatus' = "none"
 
 (* TxRejected: any state -> Rejected *)
 UnguardedTxRejected ==
@@ -295,13 +368,15 @@ UnguardedTxRejected ==
     /\ txHash' = NONE
     /\ confirmCount' = 0
     /\ prevState' = state
+    /\ receiptStatus' = "none"
 
 UnguardedNext ==
     \/ UserSend
     \/ UserRetry
     \/ \E h \in TX_HASHES :
         \/ UnguardedTxSubmitted(h)
-        \/ UnguardedTxConfirmed(h)
+        \/ UnguardedTxConfirmedSuccess(h)
+        \/ UnguardedTxConfirmedReverted(h)
         \/ \E n \in 1..MAX_CONFIRMATIONS : UnguardedTxConfirmation(h, n)
     \/ UnguardedTxFailed
     \/ UnguardedTxRejected
